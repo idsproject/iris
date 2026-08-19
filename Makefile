@@ -15,4 +15,4 @@ lint:
 	$(LINTER) run
 
 lint-fix:
-	$(LINTER) run -fix
+	$(LINTER) run --fix

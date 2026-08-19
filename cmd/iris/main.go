@@ -1,49 +1,26 @@
-
+// Command iris is the entry point for the iris HTTP API server. It
+// delegates to [app.Run], exiting non-zero if the server fails to start or shut
+// down cleanly.
 package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"os"
 
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/smithy-go"
+	"github.com/idsproject/iris/app"
 )
 
-// main uses the AWS SDK for Go V2 to create an Amazon Simple Storage Service
-// (Amazon S3) client and list up to 10 buckets in your account.
-// This example uses the default settings specified in your shared credentials
-// and config files.
 func main() {
-	ctx := context.Background()
-	sdkConfig, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		fmt.Println("Couldn't load default configuration. Have you set up your AWS account?")
-		fmt.Println(err)
-		return
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
 	}
-	s3Client := s3.NewFromConfig(sdkConfig)
-	count := 10
-	fmt.Printf("Let's list up to %v buckets for your account.\n", count)
-	result, err := s3Client.ListBuckets(ctx, &s3.ListBucketsInput{})
-	if err != nil {
-		var ae smithy.APIError
-		if errors.As(err, &ae) && ae.ErrorCode() == "AccessDenied" {
-			fmt.Println("You don't have permission to list buckets for this account.")
-		} else {
-			fmt.Printf("Couldn't list buckets for your account. Here's why: %v\n", err)
-		}
-		return
-	}
-	if len(result.Buckets) == 0 {
-		fmt.Println("You don't have any buckets!")
-	} else {
-		if count > len(result.Buckets) {
-			count = len(result.Buckets)
-		}
-		for _, bucket := range result.Buckets[:count] {
-			fmt.Printf("\t%v\n", *bucket.Name)
-		}
-	}
+}
+
+// run starts the application with a cancellable background context.
+func run() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	return app.Run(ctx)
 }
