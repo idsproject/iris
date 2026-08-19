@@ -13,6 +13,10 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    tools {
+        go 'go1.26'
+    }
+
     stages {
         stage('CI') {
             agent { label 'docker' }
