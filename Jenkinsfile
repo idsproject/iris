@@ -78,7 +78,7 @@ pipeline {
             }
             options { timeout(time: 1, unit: 'HOURS') }
             input {
-                message "Deploy ${PROJECT} to production?"
+                message "Deploy {$env.PROJECT} to production?"
                 ok 'Deploy'
                 submitter 'release-managers'
                 submitterParameter 'APPROVER'
