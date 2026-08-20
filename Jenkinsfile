@@ -127,8 +127,8 @@ pipeline {
 // ---- no script-level variables below this line, only methods ----
 
 def environments() {
-    [ staging:    [host: 'deploy@iris-dev.idsnetwork.org', credId: 'deploy-staging'],
-      production: [host: 'deploy@iris.idsnetwork.org',    credId: 'deploy-prod'] ]
+    [ staging:    [host: 'deploy@iris-dev.idsnetwork.org', credId: 'deploy-dev-ssh'],
+      production: [host: 'deploy@iris.idsnetwork.org',    credId: 'deploy-prod-ssh'] ]
 }
 
 def deployEnv() {
