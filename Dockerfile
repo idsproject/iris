@@ -18,8 +18,10 @@ RUN useradd -s /sbin/nologin -M -U iris-user
 
 FROM debian:trixie-slim
 
-# COPY migrations/ /migrations
-# ENV MIGRATIONS_DIR=file:///migrations
+RUN apt-get -y update && apt-get -y install ca-certificates
+
+COPY migrations/ /migrations
+ENV MIGRATIONS_DIR=file:///migrations
 
 COPY robots.txt /robots.txt
 # COPY openapi/open-api.json /openapi.json

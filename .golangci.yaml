@@ -1,0 +1,44 @@
+version: "2"
+formatters:
+  enable:
+    - gofmt
+linters:
+  enable:
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - copyloopvar
+    # - cyclop
+    - decorder
+    # - depguard
+    - dupl
+    # - embeddedstructfieldcheck
+    - err113
+    - errorlint
+    - exptostd
+    - forbidigo
+    - forcetypeassert
+    # - gocognit
+    - goconst
+    - gocritic
+    - godoclint
+    - gosec
+    - intrange
+    - misspell
+    - modernize
+    - musttag
+    # - nestif
+    - nilerr
+    - perfsprint
+    - prealloc
+    - predeclared
+    - sqlclosecheck
+    # - unused
+    - usestdlibvars
+  settings:
+    errcheck:
+      check-type-assertions: true
+      exclude-functions:
+       - (io.ReadCloser).Close
+    govet:
+      enable-all: true
