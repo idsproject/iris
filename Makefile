@@ -1,7 +1,7 @@
 GO ?= go
 LINTER ?= golangci-lint
 
-.PHONY: all build test lint lint-fix
+.PHONY: all build test lint lint-fix deploy
 
 all: build test lint
 
@@ -15,4 +15,7 @@ lint:
 	$(LINTER) run
 
 lint-fix:
-	$(LINTER) run --fix
+	$(LINTER) run -fix
+
+deploy:
+	echo "Deploying..."
