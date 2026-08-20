@@ -46,12 +46,12 @@ func Run(ctx context.Context) error {
 	}
 	defer dbpool.Close()
 
-	// from, to, dirty, err := data.RunMigrations(os.Getenv("MIGRATIONS_DIR"), os.Getenv("DB_URL"))
-	// if err != nil {
-	// 	logger.Error("Failed migrations", "err", err)
-	// 	return err
-	// }
-	// logger.Info("Migrations success", "fromVersion", from, "toVersion", to, "dirty", dirty)
+	from, to, dirty, err := data.RunMigrations(os.Getenv("MIGRATIONS_DIR"), os.Getenv("DB_URL"))
+	if err != nil {
+		logger.Error("Failed migrations", "err", err)
+		return err
+	}
+	logger.Info("Migrations success", "fromVersion", from, "toVersion", to, "dirty", dirty)
 
 	app := &Application{
 		Logger: logger,
