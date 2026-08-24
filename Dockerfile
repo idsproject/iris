@@ -26,6 +26,8 @@ ENV MIGRATIONS_DIR=file:///migrations
 COPY robots.txt /robots.txt
 # COPY openapi/open-api.json /openapi.json
 
+COPY test_pdfs/ /test_pdfs
+
 COPY --from=build /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=build /etc/passwd /etc/passwd
 COPY --from=build /etc/group /etc/group

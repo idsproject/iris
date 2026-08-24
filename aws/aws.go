@@ -1,18 +1,17 @@
 package aws
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"os"
 	"time"
-    "bytes"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-    "github.com/aws/aws-sdk-go-v2/feature/s3/manager"
-    "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	// "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 const partMiBs int64 = 10
@@ -22,8 +21,8 @@ var ErrCallS3 = errors.New("error calling S3")
 
 type AwsS3Connection struct {
 	ctx       context.Context
-	awsConfig aws.Config
 	s3Client  *s3.Client
+	awsConfig aws.Config
 }
 
 type BucketObject struct {
@@ -32,10 +31,6 @@ type BucketObject struct {
 }
 
 func NewAwsS3Connection(ctx context.Context) (*AwsS3Connection, error) {
-	if ctx == nil {
-		ctx = context.WithValue(context.Background(), slog.New(slog.NewTextHandler(os.Stdout, nil)), "logger")
-	}
-
 	sdkConfig, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, errors.Join(ErrLoadConfig, err)
@@ -50,7 +45,7 @@ func NewAwsS3Connection(ctx context.Context) (*AwsS3Connection, error) {
 	}, nil
 }
 
-func (conn *AwsS3Connection) GetBuckets() ([]string, error) {
+func (conn *AwsS3Connection) getBuckets() ([]string, error) {
 	result, err := conn.s3Client.ListBuckets(conn.ctx, &s3.ListBucketsInput{})
 	if err != nil {
 		return nil, errors.Join(ErrCallS3, err)
@@ -64,7 +59,7 @@ func (conn *AwsS3Connection) GetBuckets() ([]string, error) {
 	return buckets, nil
 }
 
-func (conn *AwsS3Connection) UploadFile(file *os.File, bucketName, objectKey string) error {
+func (conn *AwsS3Connection) uploadFile(file *os.File, bucketName, objectKey string) error {
 	_, err := conn.s3Client.PutObject(conn.ctx, &s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
@@ -85,7 +80,7 @@ func (conn *AwsS3Connection) UploadFile(file *os.File, bucketName, objectKey str
 	return nil
 }
 
-func (conn *AwsS3Connection) UploadLargeFile(localFilePath, bucketName, objectKey string) error {
+func (conn *AwsS3Connection) uploadLargeFile(localFilePath, bucketName, objectKey string) error {
 	data, err := os.ReadFile(localFilePath)
 	if err != nil {
 		return err
