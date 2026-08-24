@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -10,18 +9,23 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	tm "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	// "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
-const partMiBs int64 = 10
+const partMiBs int64 = 5
+const thresholdMiBs int64 = 10
 
+var ErrBadPath = errors.New("bad file path")
 var ErrLoadConfig = errors.New("error loading AWS SDK config")
 var ErrCallS3 = errors.New("error calling S3")
+var ErrDeprecatedFunc = errors.New("deprecated function")
 
 type AwsS3Connection struct {
 	ctx       context.Context
 	s3Client  *s3.Client
+	tManager  *tm.Client
 	awsConfig aws.Config
 }
 
@@ -36,12 +40,18 @@ func NewAwsS3Connection(ctx context.Context) (*AwsS3Connection, error) {
 		return nil, errors.Join(ErrLoadConfig, err)
 	}
 
-	client := s3.NewFromConfig(sdkConfig)
+	s3Client := s3.NewFromConfig(sdkConfig)
+
+	tManClient := tm.New(s3Client, func(opts *tm.Options) {
+		opts.PartSizeBytes = partMiBs * 1024 * 1024
+		opts.MultipartUploadThreshold = thresholdMiBs * 1024 * 1024
+	})
 
 	return &AwsS3Connection{
 		ctx:       ctx,
 		awsConfig: sdkConfig,
-		s3Client:  client,
+		s3Client:  s3Client,
+		tManager:  tManClient,
 	}, nil
 }
 
@@ -60,7 +70,16 @@ func (conn *AwsS3Connection) getBuckets() ([]string, error) {
 }
 
 func (conn *AwsS3Connection) uploadFile(file *os.File, bucketName, objectKey string) error {
-	_, err := conn.s3Client.PutObject(conn.ctx, &s3.PutObjectInput{
+	// _, err := conn.s3Client.PutObject(conn.ctx, &s3.PutObjectInput{
+	// 	Bucket: aws.String(bucketName),
+	// 	Key:    aws.String(objectKey),
+	// 	Body:   file,
+	// })
+	// if err != nil {
+	// 	return err
+	// }
+
+	_, err := conn.tManager.UploadObject(conn.ctx, &tm.UploadObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
 		Body:   file,
@@ -81,27 +100,111 @@ func (conn *AwsS3Connection) uploadFile(file *os.File, bucketName, objectKey str
 }
 
 func (conn *AwsS3Connection) uploadLargeFile(localFilePath, bucketName, objectKey string) error {
-	data, err := os.ReadFile(localFilePath)
+	// if !filepath.IsLocal(localFilePath) {
+	// 	return ErrBadPath
+	// }
+	// data, err := os.ReadFile(localFilePath) // #nosec G304
+	// if err != nil {
+	// 	return err
+	// }
+
+	// largeBuffer := bytes.NewReader(data)
+	// uploader := manager.NewUploader(conn.s3Client, func(u *manager.Uploader) {
+	// 	u.PartSize = partMiBs * 1024 * 1024
+	// })
+	// _, err = uploader.Upload(conn.ctx, &s3.PutObjectInput{
+	// 	Bucket: aws.String(bucketName),
+	// 	Key:    aws.String(objectKey),
+	// 	Body:   largeBuffer,
+	// })
+	// if err != nil {
+	// 	return err
+	// }
+
+	// err = s3.NewObjectExistsWaiter(conn.s3Client).Wait(
+	// 	conn.ctx,
+	// 	&s3.HeadObjectInput{Bucket: aws.String(bucketName), Key: aws.String(objectKey)},
+	// 	time.Minute)
+	// if err != nil {
+	// 	return err
+	// }
+
+	return ErrDeprecatedFunc
+}
+
+func (conn *AwsS3Connection) listObjects(bucketName string) ([]BucketObject, error) {
+	var objects []BucketObject
+
+	objectPaginator := s3.NewListObjectsV2Paginator(conn.s3Client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketName),
+	})
+	for objectPaginator.HasMorePages() {
+		output, err := objectPaginator.NextPage(conn.ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, object := range output.Contents {
+			objects = append(objects, BucketObject{
+				Key:  *object.Key,
+				Size: *object.Size,
+			})
+		}
+	}
+	return objects, nil
+}
+
+func (conn *AwsS3Connection) downloadFile(bucketName, objectKey string) ([]byte, error) {
+	// downloader := manager.NewDownloader(conn.s3Client, func(d *manager.Downloader) {
+	// 	d.PartSize = partMiBs * 1024 * 1024
+	// })
+
+	// buffer := manager.NewWriteAtBuffer([]byte{})
+	// _, err := downloader.Download(conn.ctx, buffer, &s3.GetObjectInput{
+	// 	Bucket: aws.String(bucketName),
+	// 	Key:    aws.String(objectKey),
+	// })
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	// return buffer.Bytes(), err
+
+	buffer := manager.NewWriteAtBuffer([]byte{})
+	_, err := conn.tManager.DownloadObject(conn.ctx, &tm.DownloadObjectInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		WriterAt: buffer,
+	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	largeBuffer := bytes.NewReader(data)
-	uploader := manager.NewUploader(conn.s3Client, func(u *manager.Uploader) {
-		u.PartSize = partMiBs * 1024 * 1024
-	})
-	_, err = uploader.Upload(conn.ctx, &s3.PutObjectInput{
+	return buffer.Bytes(), nil
+}
+
+func (conn *AwsS3Connection) deleteFile(bucketName, objectKey, versionId string, bypassGovernance bool) error {
+	input := &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
-		Body:   largeBuffer,
-	})
+	}
+	if versionId != "" {
+		input.VersionId = aws.String(versionId)
+	}
+	if bypassGovernance {
+		input.BypassGovernanceRetention = aws.Bool(true)
+	}
+
+	_, err := conn.s3Client.DeleteObject(conn.ctx, input)
 	if err != nil {
 		return err
 	}
 
-	err = s3.NewObjectExistsWaiter(conn.s3Client).Wait(
+	err = s3.NewObjectNotExistsWaiter(conn.s3Client).Wait(
 		conn.ctx,
-		&s3.HeadObjectInput{Bucket: aws.String(bucketName), Key: aws.String(objectKey)},
+		&s3.HeadObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+		},
 		time.Minute)
 	if err != nil {
 		return err
