@@ -3,7 +3,7 @@ package aws
 import (
 	"context"
 	"errors"
-	"os"
+	"io"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -68,12 +68,17 @@ func (conn *AwsS3Connection) getBuckets() ([]string, error) {
 	return buckets, nil
 }
 
-func (conn *AwsS3Connection) uploadFile(file *os.File, bucketName, objectKey string) error {
-	_, err := conn.tManager.UploadObject(conn.ctx, &tm.UploadObjectInput{
+func (conn *AwsS3Connection) uploadFile(file io.Reader, bucketName, objectKey string, fileSize *int64) error {
+	input := &tm.UploadObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
 		Body:   file,
-	})
+	}
+	if fileSize != nil {
+		input.ContentLength = fileSize
+	}
+
+	_, err := conn.tManager.UploadObject(conn.ctx, input)
 	if err != nil {
 		return err
 	}

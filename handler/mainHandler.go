@@ -4,10 +4,16 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/idsproject/iris/aws"
+	"github.com/idsproject/iris/util"
+
 	"github.com/idsproject/iris/internal/data"
 
 	"github.com/go-chi/chi/v5"
 )
+
+const maxUploadFileSize = 700 // in MB
+const fileSizeThreshold = 50  // in MB
 
 type MainHandler struct {
 	Logger    *slog.Logger
@@ -34,5 +40,53 @@ func (handler *MainHandler) Routes(router chi.Router) {
 }
 
 func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("uploading")) //nolint:errcheck,gosec
+	responseData := util.ResponseData{
+		Writer:  w,
+		Request: r,
+		Logger:  handler.GetLogger(),
+	}
+	var responseMessage util.ResponseMessage
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadFileSize<<20)
+	err := r.ParseMultipartForm(fileSizeThreshold << 20) // #nosec G120
+	if err != nil {
+		responseMessage = util.ResponseMessage{
+			Status:   http.StatusBadRequest,
+			Message:  "Could not parse data",
+			Error:    err,
+			CallPath: "HandleUpload/http/ParseMultipartForm",
+		}
+		util.EndpointError(responseData, responseMessage)
+		return
+	}
+
+	file, fileHeader, err := r.FormFile("articleFile")
+	if err != nil {
+		responseMessage = util.ResponseMessage{
+			Status:   http.StatusBadRequest,
+			Message:  "Could not parse file",
+			Error:    err,
+			CallPath: "HandleUpload/http/FileForm",
+		}
+		util.EndpointError(responseData, responseMessage)
+		return
+	}
+	defer file.Close() //nolint:errcheck
+
+	err = aws.UploadArticle(file, fileHeader.Filename, &fileHeader.Size)
+	if err != nil {
+		responseMessage = util.ResponseMessage{
+			Status:   http.StatusInternalServerError,
+			Message:  "Error uploading to AWS",
+			Error:    err,
+			CallPath: "HandleUpload/aws/UploadArticle",
+		}
+		util.EndpointError(responseData, responseMessage)
+		return
+	}
+
+	err = util.Success(w, r, "uploaded")
+	if err != nil {
+		handler.GetLogger().Error("HandleUpload/util/Success", "err", err)
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/idsproject/iris/aws"
 	"github.com/idsproject/iris/util"
@@ -52,9 +53,19 @@ func (handler *TestHandler) HandleTestToAws(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	filePath := workingDir + "/test_pdfs/" + fileName
+	filePath := workingDir + "/test_pdfs/" + filepath.Base(fileName)
 
-	err = aws.UploadArticle(filePath)
+	file, err := os.Open(filePath) // #nosec G304
+	if err != nil {
+		handler.GetLogger().Error("HandleTestToAws/os/Open", "err", err)
+		err = util.Error(w, r, http.StatusInternalServerError, "err")
+		if err != nil {
+			handler.GetLogger().Error("HandleTestToAws/util/Error", "err", err)
+		}
+		return
+	}
+
+	err = aws.UploadArticle(file, fileName, nil)
 	if err != nil {
 		handler.GetLogger().Error("HandleTest/aws/UploadArticle", "err", err)
 		err = util.Error(w, r, http.StatusInternalServerError, "err")
