@@ -1,9 +1,12 @@
 GO ?= go
 LINTER ?= golangci-lint
 
-.PHONY: all build test lint lint-fix deploy dev-spinup
+.PHONY: all format build test lint lint-fix deploy dev-spinup
 
-all: build test lint
+all: build test format lint
+
+format:
+	$(GO) fmt ./...
 
 build:
 	$(GO) build -o iris ./cmd/iris

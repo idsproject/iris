@@ -20,7 +20,6 @@ const thresholdMiBs int64 = 10
 var ErrBadPath = errors.New("bad file path")
 var ErrLoadConfig = errors.New("error loading AWS SDK config")
 var ErrCallS3 = errors.New("error calling S3")
-var ErrDeprecatedFunc = errors.New("deprecated function")
 
 type AwsS3Connection struct {
 	ctx       context.Context
@@ -70,15 +69,6 @@ func (conn *AwsS3Connection) getBuckets() ([]string, error) {
 }
 
 func (conn *AwsS3Connection) uploadFile(file *os.File, bucketName, objectKey string) error {
-	// _, err := conn.s3Client.PutObject(conn.ctx, &s3.PutObjectInput{
-	// 	Bucket: aws.String(bucketName),
-	// 	Key:    aws.String(objectKey),
-	// 	Body:   file,
-	// })
-	// if err != nil {
-	// 	return err
-	// }
-
 	_, err := conn.tManager.UploadObject(conn.ctx, &tm.UploadObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
@@ -97,39 +87,6 @@ func (conn *AwsS3Connection) uploadFile(file *os.File, bucketName, objectKey str
 	}
 
 	return nil
-}
-
-func (conn *AwsS3Connection) uploadLargeFile(localFilePath, bucketName, objectKey string) error {
-	// if !filepath.IsLocal(localFilePath) {
-	// 	return ErrBadPath
-	// }
-	// data, err := os.ReadFile(localFilePath) // #nosec G304
-	// if err != nil {
-	// 	return err
-	// }
-
-	// largeBuffer := bytes.NewReader(data)
-	// uploader := manager.NewUploader(conn.s3Client, func(u *manager.Uploader) {
-	// 	u.PartSize = partMiBs * 1024 * 1024
-	// })
-	// _, err = uploader.Upload(conn.ctx, &s3.PutObjectInput{
-	// 	Bucket: aws.String(bucketName),
-	// 	Key:    aws.String(objectKey),
-	// 	Body:   largeBuffer,
-	// })
-	// if err != nil {
-	// 	return err
-	// }
-
-	// err = s3.NewObjectExistsWaiter(conn.s3Client).Wait(
-	// 	conn.ctx,
-	// 	&s3.HeadObjectInput{Bucket: aws.String(bucketName), Key: aws.String(objectKey)},
-	// 	time.Minute)
-	// if err != nil {
-	// 	return err
-	// }
-
-	return ErrDeprecatedFunc
 }
 
 func (conn *AwsS3Connection) listObjects(bucketName string) ([]BucketObject, error) {
@@ -154,21 +111,6 @@ func (conn *AwsS3Connection) listObjects(bucketName string) ([]BucketObject, err
 }
 
 func (conn *AwsS3Connection) downloadFile(bucketName, objectKey string) ([]byte, error) {
-	// downloader := manager.NewDownloader(conn.s3Client, func(d *manager.Downloader) {
-	// 	d.PartSize = partMiBs * 1024 * 1024
-	// })
-
-	// buffer := manager.NewWriteAtBuffer([]byte{})
-	// _, err := downloader.Download(conn.ctx, buffer, &s3.GetObjectInput{
-	// 	Bucket: aws.String(bucketName),
-	// 	Key:    aws.String(objectKey),
-	// })
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// return buffer.Bytes(), err
-
 	buffer := manager.NewWriteAtBuffer([]byte{})
 	_, err := conn.tManager.DownloadObject(conn.ctx, &tm.DownloadObjectInput{
 		Bucket:   aws.String(bucketName),
