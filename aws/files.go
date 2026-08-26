@@ -2,35 +2,21 @@ package aws
 
 import (
 	"context"
+	"io"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
-func UploadArticle(localFilePath string) error {
+func UploadArticle(file io.Reader, fileName string, fileSize *int64) error {
 	awsConn, err := NewAwsS3Connection(context.Background())
 	if err != nil {
 		return err
 	}
 
-	if !filepath.IsLocal(localFilePath) {
-		return ErrBadPath
-	}
-	file, err := os.Open(localFilePath) // #nosec G304
-	if err != nil {
-		return err
-	}
-
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return err
-	}
-
-	fileName := "pdf/" + fileInfo.Name()
-
 	bucketName := os.Getenv("PDF_BUCKET_NAME")
+	objectKey := "pdf/" + fileName
 
-	err = awsConn.uploadFile(file, bucketName, fileName)
+	err = awsConn.uploadFile(file, bucketName, objectKey, fileSize)
 	if err != nil {
 		return err
 	}
