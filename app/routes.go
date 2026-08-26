@@ -11,6 +11,7 @@ import (
 
 func (app *Application) routes() http.Handler {
 	mainHandler := handler.CreateMainHandler(app.Logger, &app.Models.Logs)
+	testHandler := handler.CreateTestHandler(app.Logger, &app.Models.Logs)
 
 	router := chi.NewRouter()
 
@@ -25,6 +26,7 @@ func (app *Application) routes() http.Handler {
 	router.Route("/v1", func(router chi.Router) {
 		// router.Use(app.requireAuthenticatedUser)
 		router.Group(mainHandler.Routes)
+		router.Route("/tests", testHandler.Routes)
 	})
 
 	return router
