@@ -36,6 +36,7 @@ func CreateMainHandler(logger *slog.Logger, logsModel *data.LogsModel) *MainHand
 func (handler *MainHandler) Routes(router chi.Router) {
 	router.Get("/buckets", handler.HandleBuckets)
 	router.Post("/upload", handler.HandleUpload)
+	router.Post("/notify", handler.HandleNotify)
 	router.Post("/testupload", handler.HandleTestToAws)
 	router.Get("/testlist", handler.HandleTestList)
 	router.Post("/testdownload", handler.HandleTestFromAws)
@@ -56,6 +57,10 @@ func (handler *MainHandler) HandleBuckets(w http.ResponseWriter, r *http.Request
 	// if err != nil {
 	// 	handler.Logger.Error("HandleBuckets/util/Success", "err", err)
 	// }
+}
+
+func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request) {
+	handler.GetLogger().Info("Notified")
 }
 
 func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
