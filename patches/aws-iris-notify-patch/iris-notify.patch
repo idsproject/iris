@@ -1,0 +1,11 @@
+--- base/title_generator.py	1980-01-01 00:00:00.000000000 -0500
++++ title_generator.py	2026-08-25 15:30:04.649673433 -0400
+@@ -276,6 +276,8 @@
+                 }
+             }
+ 
++        from iris_hook import notify_iris_file_ready; notify_iris_file_ready(file_info['bucket'], save_path, file_name)  # PATCH-MARKER
++
+         return {
+             "statusCode": 200,
+             "body": {

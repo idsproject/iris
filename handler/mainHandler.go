@@ -37,6 +37,11 @@ func CreateMainHandler(logger *slog.Logger, logsModel *data.LogsModel) *MainHand
 
 func (handler *MainHandler) Routes(router chi.Router) {
 	router.Post("/upload", handler.HandleUpload)
+	router.Post("/notify", handler.HandleNotify)
+}
+
+func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request) {
+	handler.GetLogger().Info("Notified")
 }
 
 func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
