@@ -36,8 +36,16 @@ func CreateMainHandler(logger *slog.Logger, logsModel *data.LogsModel) *MainHand
 }
 
 func (handler *MainHandler) Routes(router chi.Router) {
+	router.Get("/healthz", handler.HandleHealthz)
 	router.Post("/upload", handler.HandleUpload)
 	router.Post("/notify", handler.HandleNotify)
+}
+
+func (handler *MainHandler) HandleHealthz(w http.ResponseWriter, r *http.Request) {
+	_, err := w.Write([]byte("OK"))
+	if err != nil {
+		handler.GetLogger().Error("HandleHealthz/http/Write", "err", err)
+	}
 }
 
 func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +73,7 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	file, fileHeader, err := r.FormFile("articleFile")
+	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
 		responseMessage = util.ResponseMessage{
 			Status:   http.StatusBadRequest,
