@@ -18,7 +18,7 @@ RUN useradd -s /sbin/nologin -M -U iris-user
 
 FROM debian:trixie-slim
 
-RUN apt-get -y update && apt-get -y install ca-certificates
+RUN apt-get -y update && apt-get -y install ca-certificates curl
 
 COPY migrations/ /migrations
 ENV MIGRATIONS_DIR=file:///migrations
