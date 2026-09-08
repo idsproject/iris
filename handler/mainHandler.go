@@ -3,6 +3,7 @@ package handler
 import (
 	"log/slog"
 	"net/http"
+	"os"
 
 	"github.com/idsproject/iris/aws"
 	"github.com/idsproject/iris/util"
@@ -36,8 +37,18 @@ func CreateMainHandler(logger *slog.Logger, logsModel *data.LogsModel) *MainHand
 }
 
 func (handler *MainHandler) Routes(router chi.Router) {
+	router.Get("/healthz", handler.HandleHealthz)
 	router.Post("/upload", handler.HandleUpload)
+	router.Get("/status/{filename}", handler.HandleStatus)
+	router.Get("/download/{filename}", handler.HandleDownload)
 	router.Post("/notify", handler.HandleNotify)
+}
+
+func (handler *MainHandler) HandleHealthz(w http.ResponseWriter, r *http.Request) {
+	_, err := w.Write([]byte("OK"))
+	if err != nil {
+		handler.GetLogger().Error("HandleHealthz/http/Write", "err", err)
+	}
 }
 
 func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +76,7 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	file, fileHeader, err := r.FormFile("articleFile")
+	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
 		responseMessage = util.ResponseMessage{
 			Status:   http.StatusBadRequest,
@@ -94,4 +105,80 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		handler.GetLogger().Error("HandleUpload/util/Success", "err", err)
 	}
+}
+
+func (handler *MainHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
+	responseData := util.ResponseData{
+		Writer:  w,
+		Request: r,
+		Logger:  handler.GetLogger(),
+	}
+	var responseMessage util.ResponseMessage
+
+	fileName := chi.URLParam(r, "filename")
+	resultKeyName := "result/COMPLIANT_" + fileName
+
+	objects, err := aws.ListObjects()
+	if err != nil {
+		responseMessage = util.ResponseMessage{
+			Status:   http.StatusInternalServerError,
+			Message:  "Error listing AWS objects",
+			Error:    err,
+			CallPath: "HandleDownload/aws/ListObjects",
+		}
+		util.EndpointError(responseData, responseMessage)
+		return
+	}
+
+	response := util.CreateResponse()
+
+	for _, object := range objects {
+		if object.Key == resultKeyName {
+			response.Add("status", "success")
+			response.Add("message", "file found")
+			response.Add("done", true)
+
+			err = response.WriteResponse(w, r, http.StatusOK)
+			if err != nil {
+				handler.GetLogger().Error("HandleStatus/util/WriteResponse", "err", err)
+			}
+			return
+		}
+	}
+
+	response.Add("status", "success")
+	response.Add("message", "file not found")
+	response.Add("done", false)
+
+	err = response.WriteResponse(w, r, http.StatusOK)
+	if err != nil {
+		handler.GetLogger().Error("HandleStatus/util/WriteResponse", "err", err)
+	}
+}
+
+func (handler *MainHandler) HandleDownload(w http.ResponseWriter, r *http.Request) {
+	responseData := util.ResponseData{
+		Writer:  w,
+		Request: r,
+		Logger:  handler.GetLogger(),
+	}
+	var responseMessage util.ResponseMessage
+
+	fileName := chi.URLParam(r, "filename")
+
+	err := aws.DownloadArticle(fileName)
+	if err != nil {
+		responseMessage = util.ResponseMessage{
+			Status:   http.StatusInternalServerError,
+			Message:  "Error downloading to AWS",
+			Error:    err,
+			CallPath: "HandleUpload/aws/DownloadArticle",
+		}
+		util.EndpointError(responseData, responseMessage)
+		return
+	}
+
+	dirFS := os.DirFS(os.Getenv("DOWNLOAD_DIR"))
+
+	http.ServeFileFS(w, r, dirFS, fileName) // #nosec G703
 }

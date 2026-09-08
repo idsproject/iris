@@ -46,13 +46,6 @@ func Run(ctx context.Context) error {
 	}
 	defer dbpool.Close()
 
-	from, to, dirty, err := data.RunMigrations(os.Getenv("MIGRATIONS_DIR"), os.Getenv("DB_URL"))
-	if err != nil {
-		logger.Error("Failed migrations", "err", err)
-		return err
-	}
-	logger.Info("Migrations success", "fromVersion", from, "toVersion", to, "dirty", dirty)
-
 	app := &Application{
 		Logger: logger,
 		Models: data.NewModels(dbpool),
@@ -63,6 +56,19 @@ func Run(ctx context.Context) error {
 		logger.Error(err.Error())
 		return err
 	}
+
+	return nil
+}
+
+func RunMigrations() error {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	from, to, dirty, err := data.RunMigrations(os.Getenv("MIGRATIONS_DIR"), os.Getenv("DB_URL"))
+	if err != nil {
+		logger.Error("Failed migrations", "err", err)
+		return err
+	}
+	logger.Info("Migrations success", "fromVersion", from, "toVersion", to, "dirty", dirty)
 
 	return nil
 }

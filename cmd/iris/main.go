@@ -12,15 +12,25 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
+	os.Exit(mainErr())
+}
+
+func mainErr() int {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := run(ctx, os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
+
+	return 0
 }
 
 // run starts the application with a cancellable background context.
-func run() error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func run(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "migrate" {
+		return app.RunMigrations()
+	}
 	return app.Run(ctx)
 }
