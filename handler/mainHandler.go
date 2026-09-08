@@ -38,6 +38,7 @@ func CreateMainHandler(logger *slog.Logger, logsModel *data.LogsModel) *MainHand
 func (handler *MainHandler) Routes(router chi.Router) {
 	router.Get("/healthz", handler.HandleHealthz)
 	router.Post("/upload", handler.HandleUpload)
+    router.Get("/download/{filename}", handler.HandleDownload)
 	router.Post("/notify", handler.HandleNotify)
 }
 
@@ -102,4 +103,53 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		handler.GetLogger().Error("HandleUpload/util/Success", "err", err)
 	}
+}
+
+func (handler *MainHandler) HandleDownload(w http.ResponseWriter, r *http.Request) {
+	responseData := util.ResponseData{
+		Writer:  w,
+		Request: r,
+		Logger:  handler.GetLogger(),
+	}
+	var responseMessage util.ResponseMessage
+
+    fileName := chi.URLParam(r, "filename")
+    resultKeyName := "result/COMPLIANT_" + fileName
+
+    objects, err := aws.ListObjects()
+    if err != nil {
+		responseMessage = util.ResponseMessage{
+			Status:   http.StatusInternalServerError,
+			Message:  "Error listing AWS objects",
+			Error:    err,
+			CallPath: "HandleDownload/aws/ListObjects",
+		}
+		util.EndpointError(responseData, responseMessage)
+		return
+    }
+
+    for _, object := range objects {
+        if object.Key == resultKeyName {
+            err = aws.DownloadDArticle(fileName)
+            if err != nil {
+                responseMessage = util.ResponseMessage{
+                    Status:   http.StatusInternalServerError,
+                    Message:  "Error downloading to AWS",
+                    Error:    err,
+                    CallPath: "HandleUpload/aws/DownloadArticle",
+                }
+                util.EndpointError(responseData, responseMessage)
+                return
+            }
+            http.ServeFile(w, r, os.Getnenv("DOWNLOAD_DIR") + "/" + fileName)
+            return
+        }
+    }
+
+    response := util.CreateResponse()
+    response.Add("status", "success")
+    response.Add("message", "No file with name " + fileName + " in results")
+    response.Add("done", false)
+    
+    response.WriteResponse(w, r, http.StatusOK)
 }
