@@ -32,13 +32,15 @@ deploy:
 	@test -n "$(IMAGE)"   || { echo "IMAGE is required";   exit 1; }
 	@test -n "$(HOST)"    || { echo "HOST is required";    exit 1; }
 	@test -n "$(SSH_KEY)" || { echo "SSH_KEY is required (set by withCredentials)"; exit 1; }
+	@test -s "$(DEPLOY_SCRIPT)" || { echo "missing or empty $(DEPLOY_SCRIPT)"; exit 1; }
 	@echo "deploying $(SERVICE) to $(HOST) [$(ENVIRONMENT)]"
 	ssh -i "$(SSH_KEY)" $(SSH_OPTS) "$(HOST)" \
-	    IRIS_IMAGE="$(IMAGE)" \
-	    COMPOSE_DIR="$(COMPOSE_DIR)" \
-	    SERVICE="$(SERVICE)" \
-	    ENVIRONMENT="$(ENVIRONMENT)" \
-	    bash -se < bin/deploy-remote.sh
+		IMAGE_VAR="$(IMAGE_VAR)" \
+		IMAGE_REF="$(IMAGE)" \
+		COMPOSE_DIR="$(COMPOSE_DIR)" \
+		SERVICE="$(SERVICE)" \
+		ENVIRONMENT="$(ENVIRONMENT)" \
+		bash -se < "$(DEPLOY_SCRIPT)"
 
 local-spinup:
 	docker network create iris-test
