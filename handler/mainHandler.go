@@ -3,6 +3,7 @@ package handler
 import (
 	"log/slog"
 	"net/http"
+    "os"
 
 	"github.com/idsproject/iris/aws"
 	"github.com/idsproject/iris/util"
@@ -130,7 +131,7 @@ func (handler *MainHandler) HandleDownload(w http.ResponseWriter, r *http.Reques
 
     for _, object := range objects {
         if object.Key == resultKeyName {
-            err = aws.DownloadDArticle(fileName)
+            err = aws.DownloadArticle(fileName)
             if err != nil {
                 responseMessage = util.ResponseMessage{
                     Status:   http.StatusInternalServerError,
@@ -141,7 +142,7 @@ func (handler *MainHandler) HandleDownload(w http.ResponseWriter, r *http.Reques
                 util.EndpointError(responseData, responseMessage)
                 return
             }
-            http.ServeFile(w, r, os.Getnenv("DOWNLOAD_DIR") + "/" + fileName)
+            http.ServeFile(w, r, os.Getenv("DOWNLOAD_DIR") + "/" + fileName)
             return
         }
     }

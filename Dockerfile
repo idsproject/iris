@@ -32,7 +32,7 @@ COPY --from=build /etc/group /etc/group
 
 COPY --from=build /iris .
 
-ENV DOWNLOAD_DIR /downloads
+ENV DOWNLOAD_DIR=/downloads
 
 USER iris-user:iris-user
 CMD ["/iris"]
