@@ -30,9 +30,7 @@ COPY --from=build /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=build /etc/passwd /etc/passwd
 COPY --from=build /etc/group /etc/group
 
-COPY --from=build /iris .
-
-ENV DOWNLOAD_DIR=/downloads
+COPY --from=build /iris /iris
 
 USER iris-user:iris-user
 CMD ["/iris"]

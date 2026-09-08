@@ -136,14 +136,16 @@ func (handler *MainHandler) HandleStatus(w http.ResponseWriter, r *http.Request)
         if object.Key == resultKeyName {
             response.Add("status", "success")
             response.Add("message", "file found")
+            response.Add("done", true)
 
             response.WriteResponse(w, r, http.StatusOK)
             return
         }
     }
 
-    response.Add("status", "error")
+    response.Add("status", "success")
     response.Add("message", "file not found")
+    response.Add("done", false)
 
     response.WriteResponse(w, r, http.StatusOK)
 }
