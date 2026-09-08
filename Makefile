@@ -2,6 +2,7 @@ GO ?= go
 LINTER ?= golangci-lint
 COMPOSE_DIR ?= /opt/ids-gateway
 SERVICE ?= iris
+IMAGE_VAR ?= IRIS_IMAGE
 SSH_OPTS := -o StrictHostKeyChecking=accept-new \
             -o BatchMode=yes \
             -o ConnectTimeout=10
