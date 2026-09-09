@@ -14,12 +14,12 @@ type TrackingModel struct {
 }
 
 type Tracking struct {
-	Processed     time.Time
-	LibraryID     string
-	TransactionID string
-    PageCount int
-	Paid          bool
-	ID            int
+	Processed     time.Time `json:"processed"`
+	LibraryID     string    `json:"library_id"`
+	TransactionID string    `json:"transaction_id"`
+	PageCount     int       `json:"page_count"`
+	Paid          bool      `json:"paid"`
+	ID            int       `json:"-"`
 }
 
 func (model TrackingModel) InsertTracking(libraryid string, transactionid string, pageCount int, paid bool) error {
@@ -37,7 +37,7 @@ func (model TrackingModel) InsertTracking(libraryid string, transactionid string
 func (model TrackingModel) GetReportFromRange(libraryid string, start time.Time, end time.Time) ([]Tracking, error) {
 	query := `
     select * from tracking
-    where libraryid = '$1'
+    where libraryid = $1
     and processed >= $2
     and processed <= $3`
 
