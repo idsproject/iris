@@ -1,6 +1,7 @@
 import boto3
 import random
 import time
+import json
 import urllib.request
 import urllib.error
 
@@ -73,7 +74,7 @@ def _post_to_iris(iris_url, api_key, data):
         data=data,
         headers={
             'Content-Type': 'application/json',
-            'Authorization': f'Bearer {api_key}',
+            'Authorization': f'{api_key}',
             # If IRIS expects a different header name/scheme
             # (e.g. "X-API-Key: <key>"), swap it in here.
         },
@@ -111,10 +112,10 @@ def notify_iris_file_ready(bucket_name, result_key, filename):
         return False
 
     payload = {
-        "bucket": bucket_name,
-        "key": result_key,
-        "filename": filename,
-        "status": "ready",
+        "sender": "aws",
+        "file": filename,
+        "status": "success",
+        "message": "remediation complete"
     }
     data = json.dumps(payload).encode('utf-8')
 
