@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"time"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/idsproject/iris/aws"
 	"github.com/idsproject/iris/util"
@@ -34,11 +34,6 @@ type ReportResponse struct {
 	Data       []data.Tracking `json:"data"`
 	TotalPages int             `json:"total_pages"`
 	TotalCost  float64         `json:"total_cost"`
-}
-
-type MainHandler struct {
-	Logger    *slog.Logger
-	LogsModel *data.LogsModel
 }
 
 type MainHandler struct {
@@ -75,7 +70,7 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 	responseData := util.ResponseData{
 		Writer:  w,
 		Request: r,
-		Logger:  handler.GetLogger(),
+		Logger:  handler.Logger,
 	}
 	var responseMessage util.ResponseMessage
 	var message Notify
@@ -97,10 +92,10 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 	safePath := filepath.Join(baseDir, message.File)
 
 	if !strings.HasPrefix(safePath, baseDir) {
-		handler.GetLogger().Warn("HandleNotify received unclean filename", "filename", message.File)
+		handler.Logger.Warn("HandleNotify received unclean filename", "filename", message.File)
 		err = util.Error(w, r, http.StatusBadRequest, "Invalid file name")
 		if err != nil {
-			handler.GetLogger().Error("HandleNotify/util/Error", "err", err)
+			handler.Logger.Error("HandleNotify/util/Error", "err", err)
 		}
 		return
 	}
@@ -108,21 +103,21 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 	switch message.Message {
 	case "remediation complete":
 		// here is where we will call CrossLink
-		handler.GetLogger().Info("Received remediation complete", "payload", message)
+		handler.Logger.Info("Received remediation complete", "payload", message)
 	case "download complete":
 		err = os.Remove(safePath) // #nosec G703
 		if err != nil {
-			handler.GetLogger().Error("HandleNotify/os/Remove", "err", err)
+			handler.Logger.Error("HandleNotify/os/Remove", "err", err)
 			err = util.Error(w, r, http.StatusInternalServerError, "Unable to clean up files")
 			if err != nil {
-				handler.GetLogger().Error("HandleNotify/util/Error", "err", err)
+				handler.Logger.Error("HandleNotify/util/Error", "err", err)
 			}
 			return
 		}
 	default:
 		err = util.Error(w, r, http.StatusBadRequest, "Unknown message")
 		if err != nil {
-			handler.GetLogger().Error("HandleNotify/util/Error", "err", err)
+			handler.Logger.Error("HandleNotify/util/Error", "err", err)
 		}
 	}
 
