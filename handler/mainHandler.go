@@ -116,7 +116,10 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-    util.Success(w, r, "notified")
+	err = util.Success(w, r, "notified")
+	if err != nil {
+		handler.Logger.Error("HandleNotify/util/Success", "err", err)
+	}
 }
 
 func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
