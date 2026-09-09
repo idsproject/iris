@@ -11,6 +11,7 @@ import (
 	"github.com/idsproject/iris/internal/data"
 
 	"github.com/go-chi/chi/v5"
+    "github.com/ledongthuc/pdf"
 )
 
 const maxUploadFileSize = 700 // in MB
@@ -19,20 +20,14 @@ const fileSizeThreshold = 50  // in MB
 type MainHandler struct {
 	Logger    *slog.Logger
 	LogsModel *data.LogsModel
+    TrackingModel *data.TrackingModel
 }
 
-func (handler *MainHandler) GetLogger() *slog.Logger {
-	return handler.Logger
-}
-
-func (handler *MainHandler) GetLogsModel() *data.LogsModel {
-	return handler.LogsModel
-}
-
-func CreateMainHandler(logger *slog.Logger, logsModel *data.LogsModel) *MainHandler {
+func CreateMainHandler(logger *slog.Logger, logsModel *data.LogsModel, trackingModel *data.TrackingModel) *MainHandler {
 	return &MainHandler{
 		Logger:    logger,
 		LogsModel: logsModel,
+        TrackingModel: trackingModel,
 	}
 }
 
@@ -47,19 +42,19 @@ func (handler *MainHandler) Routes(router chi.Router) {
 func (handler *MainHandler) HandleHealthz(w http.ResponseWriter, r *http.Request) {
 	_, err := w.Write([]byte("OK"))
 	if err != nil {
-		handler.GetLogger().Error("HandleHealthz/http/Write", "err", err)
+		handler.Logger.Error("HandleHealthz/http/Write", "err", err)
 	}
 }
 
 func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request) {
-	handler.GetLogger().Info("Notified")
+	handler.Logger.Info("Notified")
 }
 
 func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	responseData := util.ResponseData{
 		Writer:  w,
 		Request: r,
-		Logger:  handler.GetLogger(),
+		Logger:  handler.Logger,
 	}
 	var responseMessage util.ResponseMessage
 
@@ -89,6 +84,31 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 	}
 	defer file.Close() //nolint:errcheck
 
+    transactionId := r.URL.Query().Get("transaction")
+    if transactionId == "" {
+        err = util.Error(w, r, http.StatusBadRequest, "need transaction in url query")
+        if err != nil {
+            handler.Logger.Error("HandleUpload/util/Error", "err", err)
+        }
+        return
+    }
+
+    libraryId := r.Header.Get("X-Library-Id")
+
+    pdfReader, err := pdf.NewReader(file, fileHeader.Size)
+    if err != nil {
+		responseMessage = util.ResponseMessage{
+			Status:   http.StatusInternalServerError,
+			Message:  "Error opening as pdf",
+			Error:    err,
+			CallPath: "HandleUpload/pdf/NewReader",
+		}
+		util.EndpointError(responseData, responseMessage)
+		return
+	}
+
+    pageCount := pdfReader.NumPage()
+
 	err = aws.UploadArticle(file, fileHeader.Filename, &fileHeader.Size)
 	if err != nil {
 		responseMessage = util.ResponseMessage{
@@ -101,9 +121,21 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+    err = handler.TrackingModel.InsertTracking(libraryId, transactionId, pageCount, false)
+    if err != nil {
+		responseMessage = util.ResponseMessage{
+			Status:   http.StatusInternalServerError,
+			Message:  "Error updating tracking",
+			Error:    err,
+			CallPath: "HandleUpload/data/InsertTracking",
+		}
+		util.EndpointError(responseData, responseMessage)
+		return
+    }
+
 	err = util.Success(w, r, "uploaded")
 	if err != nil {
-		handler.GetLogger().Error("HandleUpload/util/Success", "err", err)
+		handler.Logger.Error("HandleUpload/util/Success", "err", err)
 	}
 }
 
@@ -111,7 +143,7 @@ func (handler *MainHandler) HandleStatus(w http.ResponseWriter, r *http.Request)
 	responseData := util.ResponseData{
 		Writer:  w,
 		Request: r,
-		Logger:  handler.GetLogger(),
+		Logger:  handler.Logger,
 	}
 	var responseMessage util.ResponseMessage
 
@@ -140,7 +172,7 @@ func (handler *MainHandler) HandleStatus(w http.ResponseWriter, r *http.Request)
 
 			err = response.WriteResponse(w, r, http.StatusOK)
 			if err != nil {
-				handler.GetLogger().Error("HandleStatus/util/WriteResponse", "err", err)
+				handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
 			}
 			return
 		}
@@ -152,7 +184,7 @@ func (handler *MainHandler) HandleStatus(w http.ResponseWriter, r *http.Request)
 
 	err = response.WriteResponse(w, r, http.StatusOK)
 	if err != nil {
-		handler.GetLogger().Error("HandleStatus/util/WriteResponse", "err", err)
+		handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
 	}
 }
 
@@ -160,7 +192,7 @@ func (handler *MainHandler) HandleDownload(w http.ResponseWriter, r *http.Reques
 	responseData := util.ResponseData{
 		Writer:  w,
 		Request: r,
-		Logger:  handler.GetLogger(),
+		Logger:  handler.Logger,
 	}
 	var responseMessage util.ResponseMessage
 

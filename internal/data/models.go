@@ -12,13 +12,15 @@ import (
 // Models aggregates every data-access model, giving handlers a single value
 // through which to reach the database.
 type Models struct {
-	Logs LogsModel
+	Logs     LogsModel
+	Tracking TrackingModel
 }
 
 // NewModels returns a [Models] whose every model shares the given connection
 // pool.
 func NewModels(db *pgxpool.Pool) Models {
 	return Models{
-		Logs: LogsModel{DB: db},
+		Logs:     LogsModel{DB: db},
+		Tracking: TrackingModel{DB: db},
 	}
 }
