@@ -98,7 +98,7 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 	switch message.Message {
 	case "remediation complete":
 		// here is where we will call CrossLink
-		handler.GetLogger().Info("Received remediation complete")
+		handler.GetLogger().Info("Received remediation complete", "payload", message)
 	case "download complete":
 		err = os.Remove(safePath) // #nosec G703
 		if err != nil {
@@ -115,6 +115,8 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 			handler.GetLogger().Error("HandleNotify/util/Error", "err", err)
 		}
 	}
+
+    util.Success(w, r, "notified")
 }
 
 func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {

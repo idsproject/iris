@@ -111,10 +111,10 @@ def notify_iris_file_ready(bucket_name, result_key, filename):
         return False
 
     payload = {
-        "bucket": bucket_name,
-        "key": result_key,
-        "filename": filename,
-        "status": "ready",
+        "sender": "aws",
+        "file": filename,
+        "status": "success",
+        "message": "remediation complete"
     }
     data = json.dumps(payload).encode('utf-8')
 
