@@ -42,6 +42,22 @@ deploy:
 		ENVIRONMENT="$(ENVIRONMENT)" \
 		bash -se < "$(DEPLOY_SCRIPT)"
 
+local:
+	if ! docker network inspect local-iris-net >/dev/null 2>&1; then \
+		docker network create local-iris-net; \
+	fi
+	if [ -z "$$(docker ps -a -q -f name=^local-iris-postgres$$)" ]; then \
+		echo "WTF IS HAPPENING"; \
+		docker run -d --name local-iris-postgres --network local-iris-net --env-file .env postgres; \
+	fi
+	if [ -n "$$(docker ps -a -q -f name=^local-iris-api$$)" ]; then \
+		docker stop local-iris-api; \
+		docker rm local-iris-api; \
+	fi
+	docker build -t iris:local ./
+	docker run --rm --network local-iris-net --env-file .env --entrypoint /iris iris:local migrate
+	docker run -d --name local-iris-api --network local-iris-net --env-file .env -p "127.0.0.1:8080:8080" -v ./data/pdfs:/pdfs iris:local
+
 local-spinup:
 	docker network create iris-test
 	docker run -d --name iris-postgres --network iris-test --env-file .env postgres
