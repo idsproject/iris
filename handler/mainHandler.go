@@ -2,13 +2,13 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-    "errors"
 
 	"github.com/idsproject/iris/aws"
 	"github.com/idsproject/iris/util"
@@ -105,17 +105,17 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 	case "remediation complete":
 		// here is where we will call CrossLink
 		handler.Logger.Info("Received remediation complete", "payload", message)
-        err := aws.DownloadArticle(message.File)
-        if err != nil {
-            responseMessage = util.ResponseMessage{
-                Status:   http.StatusInternalServerError,
-                Message:  "Error downloading to AWS",
-                Error:    err,
-                CallPath: "HandleUpload/aws/DownloadArticle",
-            }
-            util.EndpointError(responseData, responseMessage)
-            return
-        }
+		err = aws.DownloadArticle(message.File)
+		if err != nil {
+			responseMessage = util.ResponseMessage{
+				Status:   http.StatusInternalServerError,
+				Message:  "Error downloading to AWS",
+				Error:    err,
+				CallPath: "HandleUpload/aws/DownloadArticle",
+			}
+			util.EndpointError(responseData, responseMessage)
+			return
+		}
 	case "download complete":
 		err = os.Remove(safePath) // #nosec G703
 		if err != nil {
@@ -248,40 +248,40 @@ func (handler *MainHandler) HandleStatus(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-    response := util.CreateResponse()
-    if _, statErr := os.Stat(safePath); statErr == nil {
-        response.Add("status", "success")
-        response.Add("message", "file found")
-        response.Add("done", true)
-        
-        err := response.WriteResponse(w, r, http.StatusOK)
-        if err != nil {
-            handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
-        }
+	response := util.CreateResponse()
+	if _, statErr := os.Stat(safePath); statErr == nil { // #nosec G703
+		response.Add("status", "success")
+		response.Add("message", "file found")
+		response.Add("done", true)
 
-        return
-    } else if errors.Is(statErr, os.ErrNotExist) {
-        response.Add("status", "success")
-        response.Add("message", "file not found")
-        response.Add("done", false)
+		err := response.WriteResponse(w, r, http.StatusOK)
+		if err != nil {
+			handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
+		}
 
-        err := response.WriteResponse(w, r, http.StatusOK)
-        if err != nil {
-            handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
-        }
+		return
+	} else if errors.Is(statErr, os.ErrNotExist) {
+		response.Add("status", "success")
+		response.Add("message", "file not found")
+		response.Add("done", false)
 
-        return
-    } else {
-        handler.Logger.Error("HandleStatus/os/Stat", "err", statErr)
-        response.Add("status", "error")
-        response.Add("message", "error checking file")
-        response.Add("done", false)
+		err := response.WriteResponse(w, r, http.StatusOK)
+		if err != nil {
+			handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
+		}
 
-        err := response.WriteResponse(w, r, http.StatusInternalServerError)
-        if err != nil {
-            handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
-        }
-    }
+		return
+	} else {
+		handler.Logger.Error("HandleStatus/os/Stat", "err", statErr)
+		response.Add("status", "error")
+		response.Add("message", "error checking file")
+		response.Add("done", false)
+
+		err := response.WriteResponse(w, r, http.StatusInternalServerError)
+		if err != nil {
+			handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
+		}
+	}
 }
 
 func (handler *MainHandler) HandleDownload(w http.ResponseWriter, r *http.Request) {
