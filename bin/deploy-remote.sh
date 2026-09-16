@@ -86,7 +86,7 @@ echo "==> COMPOSE_ENV_FILES=$COMPOSE_ENV_FILES"
 # as "required variable IRIS_IMAGE is missing a value", so this is mostly a
 # cheap sanity check. The real verification happens after `up -d`, against the
 # container that actually got created.
-if ! images=$(docker compose config --images "$SERVICE" 2>&1); then
+if ! images=$(docker compose -f docker-compose.yaml config --images "$SERVICE" 2>&1); then
     echo "ERROR: compose could not resolve the stack:"
     echo "$images"
     echo
@@ -108,7 +108,7 @@ fi
 # ------------------------------------------------------------- pull and up
 # Requires the SSH user's own `docker login` on this host, with credsStore
 # removed from its ~/.docker/config.json.
-docker compose pull "$SERVICE"
+docker compose -f docker-compose.yaml pull "$SERVICE"
 
 # The migrator is its own compose service on the same image, wired in as a
 # depends_on with service_completed_successfully, so `up -d` runs migrations
@@ -128,7 +128,7 @@ fi
 # SIGPIPE compose and fail the pipeline. Trim in the shell instead.
 # -a is required: without it, compose lists only RUNNING containers, so a
 # service that crashed on startup returns empty and is misreported.
-cid=$(docker compose ps -aq "$SERVICE")
+cid=$(docker compose -f docker-compose.yaml ps -aq "$SERVICE")
 cid=${cid%%$'\n'*}
 if [ -z "$cid" ]; then
     echo "ERROR: no container was created for $SERVICE"
@@ -202,5 +202,5 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
 done
 
 echo "ERROR: $SERVICE did not become healthy within ${timeout_secs}s"
-docker compose logs --tail=50 "$SERVICE"
+docker compose -f docker-compose.yaml logs --tail=50 "$SERVICE"
 exit 1
