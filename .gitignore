@@ -1,2 +1,5 @@
 /iris
 .env
+
+data/test_pdfs/*
+!data/test_pdfs/README.md

@@ -4,11 +4,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 )
 
 type Response struct {
 	Content map[string]any
+}
+
+type ResponseData struct {
+	Writer  http.ResponseWriter
+	Request *http.Request
+	Logger  *slog.Logger
+}
+type ResponseMessage struct {
+	Error    error
+	Message  string
+	CallPath string
+	Status   int
 }
 
 func CreateResponse() *Response {
@@ -80,4 +94,13 @@ func Success(w http.ResponseWriter, r *http.Request, message any, args ...any) e
 		return err
 	}
 	return nil
+}
+
+func EndpointError(data ResponseData, message ResponseMessage) {
+	baseFunc, _, _ := strings.Cut(message.CallPath, "/")
+	data.Logger.Error(message.CallPath, "err", message.Error)
+	err := Error(data.Writer, data.Request, message.Status, message.Message)
+	if err != nil {
+		data.Logger.Error(baseFunc+"/util/Error", "err", err)
+	}
 }

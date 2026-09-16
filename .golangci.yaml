@@ -42,3 +42,6 @@ linters:
        - (io.ReadCloser).Close
     govet:
       enable-all: true
+    gosec:
+      config:
+        G306: "0644"
