@@ -22,7 +22,7 @@ pipeline {
             agent { label 'docker' }
 
             environment {
-                DOCKER_CONFIG = "${WORKSPACE_TMP}/docker-${BRANCH_NAME}"
+                DOCKER_CONFIG = "${WORKSPACE_TMP}/docker"
                 GOLANGCI_LINT_CACHE = "/var/cache/jenkins/golangci/${JOB_BASE_NAME}"
             }
 
@@ -57,7 +57,16 @@ pipeline {
                     steps {
                         script {
                             docker.withRegistry("https://${env.REGISTRY}", 'registry-creds') {
-                                sh "docker image rm ${env.IMAGE_REF} || true"
+                                // Remove EVERY local reference to the image, not just the
+                                // digest one. The tags share an image ID, so removing the
+                                // digest alone leaves the layers cached and makes the
+                                // pull below a no-op that would pass on an empty registry.
+                                sh """
+                                    docker image rm \
+                                        ${env.REGISTRY}/${env.PROJECT}:${env.GIT_SHA} \
+                                        ${env.REGISTRY}/${env.PROJECT}:cache \
+                                        ${env.IMAGE_REF} || true
+                                """
                                 sh "docker pull ${env.IMAGE_REF}"
                             }
                             echo "verified ${env.IMAGE_REF}"
@@ -69,7 +78,9 @@ pipeline {
             post {
                 always {
                     sh 'docker logout "$REGISTRY" || true'
-                    sh(script: 'docker image rm "$REGISTRY/$PROJECT:$GIT_SHA" || true',
+                    // Verify push pulls the image back by digest, so both the
+                    // tag and the digest reference can be left on the agent.
+                    sh(script: 'docker image rm "$REGISTRY/$PROJECT:$GIT_SHA" "$IMAGE_REF" || true',
                        returnStatus: true)
                     cleanWs()
                 }
@@ -83,7 +94,7 @@ pipeline {
             }
             options { timeout(time: 1, unit: 'HOURS') }
             input {
-                message "Deploy {$env.PROJECT} to production?"
+                message "Deploy ${env.PROJECT} to production?"
                 ok 'Deploy'
                 submitter 'release-managers'
                 submitterParameter 'APPROVER'
@@ -99,15 +110,25 @@ pipeline {
                 beforeAgent true
                 expression { env.DEPLOY_ENV }
             }
+            options { timeout(time: 15, unit: 'MINUTES') }
             steps {
                 script {
+                    // A null IMAGE_REF interpolates as the literal string "null",
+                    // which make would happily pass along. Fail loudly instead.
+                    // Also catches "Restart from Stage", which loses build env vars.
+                    if (!env.IMAGE_REF) {
+                        error 'IMAGE_REF is not set - the Build stage did not produce an image'
+                    }
+
                     def cfg = environments()[env.DEPLOY_ENV]
+                    if (!cfg) { error "no environment config for '${env.DEPLOY_ENV}'" }
 
                     lock(resource: "deploy-${env.DEPLOY_ENV}-${env.PROJECT}") {
+                        // cfg.host already carries the user (deploy@...), so no
+                        // usernameVariable here - one source of truth.
                         withCredentials([sshUserPrivateKey(
                                 credentialsId: cfg.credId,
-                                keyFileVariable: 'SSH_KEY',
-                                usernameVariable: 'SSH_USER')]) {
+                                keyFileVariable: 'SSH_KEY')]) {
                             sh """
                                 make deploy \
                                     IMAGE=${env.IMAGE_REF} \
@@ -116,7 +137,7 @@ pipeline {
                             """
                         }
                     }
-                    echo "deployed ${env.PROJECT} → ${env.DEPLOY_ENV} (${env.IMAGE_REF})"
+                    echo "deployed ${env.PROJECT} -> ${env.DEPLOY_ENV} (${env.IMAGE_REF})"
                 }
             }
             post { always { cleanWs() } }
@@ -144,6 +165,8 @@ def buildAndPush(String registry, String project, String sha) {
     def tag  = "${repo}:${sha}"
 
     docker.withRegistry("https://${registry}", 'registry-creds') {
+        // No `| tee`. sh runs without pipefail, so a pipeline's exit status is
+        // tee's, and a failed push would pass silently.
         sh """
             DOCKER_BUILDKIT=1 docker build \
                 --build-arg BUILDKIT_INLINE_CACHE=1 \
@@ -151,14 +174,16 @@ def buildAndPush(String registry, String project, String sha) {
                 -f Dockerfile \
                 -t ${tag} -t ${repo}:cache \
                 .
-            docker push ${tag} | tee push.log
+            docker push ${tag} > push.log
+            cat push.log
             docker push ${repo}:cache
         """
     }
 
-    def digest = sh(script: "grep -o 'sha256:[0-9a-f]\\{64\\}' push.log | tail -1",
+    // `|| true` matters: sh runs with -e, so a grep that matches nothing exits 1
+    // and fails the step with a bare exit code, making the error below dead code.
+    def digest = sh(script: "grep -o 'sha256:[0-9a-f]\\{64\\}' push.log | tail -1 || true",
                     returnStdout: true).trim()
     if (!digest) { error "could not determine pushed digest for ${tag}" }
     return "${repo}@${digest}"
 }
-

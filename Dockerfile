@@ -18,7 +18,7 @@ RUN useradd -s /sbin/nologin -M -U iris-user
 
 FROM debian:trixie-slim
 
-RUN apt-get -y update && apt-get -y install ca-certificates
+RUN apt-get -y update && apt-get -y install ca-certificates curl
 
 COPY migrations/ /migrations
 ENV MIGRATIONS_DIR=file:///migrations
@@ -30,7 +30,7 @@ COPY --from=build /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=build /etc/passwd /etc/passwd
 COPY --from=build /etc/group /etc/group
 
-COPY --from=build /iris .
+COPY --from=build /iris /iris
 
 USER iris-user:iris-user
 CMD ["/iris"]
