@@ -117,7 +117,7 @@ docker compose pull "$SERVICE"
 # A failed migration is the most likely failure here, and set -e would abort
 # with only compose's one-line error. Dump recent logs so the migrator's
 # output is visible in the build.
-if ! docker compose up -d "$SERVICE"; then
+if ! docker compose -f docker-compose.yaml up -d "$SERVICE"; then
     echo "ERROR: compose up failed - dependency or migration likely failed"
     docker compose logs --tail=100 || true
     exit 1
