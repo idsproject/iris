@@ -25,11 +25,11 @@ const fileSizeThreshold = 50  // in MB
 const PricePerPage = 0.15
 
 type Notify struct {
+	Data    any    `json:"payload,omitempty"`
 	Sender  string `json:"sender"`
 	Status  string `json:"status"`
 	File    string `json:"file"`
 	Message string `json:"message"`
-	Data    any    `json:"payload,omitempty"`
 }
 
 type ReportResponse struct {
@@ -128,7 +128,7 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	case "remediation error":
-		handler.Logger.Info("remedation error recieved", "payload", message)
+		handler.Logger.Info("remedation error received", "payload", message)
 	default:
 		err = util.Error(w, r, http.StatusBadRequest, "Unknown message")
 		if err != nil {
