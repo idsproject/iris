@@ -28,7 +28,7 @@ type Notify struct {
 	Sender  string `json:"sender"`
 	Status  string `json:"status"`
 	File    string `json:"file"`
-	Message string `json:"message"`
+	Message any `json:"message"`
 }
 
 type ReportResponse struct {
