@@ -31,12 +31,25 @@ fi
 FUNCTION_NAME="pdf-remediation-failure-notifier"
 ROLE_NAME="${FUNCTION_NAME}-role"
 FILTER_NAME="failure-notifier"
-LOG_GROUPS=(
-  "/aws/lambda/PDFAccessibility-PdfChunkSplitterLambdaFDB27681-TfDtfjTyEwjs"
-  "/aws/lambda/PDFAccessibility-PdfMergerLambda3075CEA9-wsiSWTIlDCFU"
-  "/ecs/pdf-remediation/adobe-autotag"
-  "/ecs/pdf-remediation/alt-text-generator"
-)
+
+# ---------- Log groups (from log-groups.txt) ----------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_GROUPS=()
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line="${line%%#*}"                     # drop comments
+  line="$(printf '%s' "$line" | tr -d ',"'"'"' \t\r')"  # drop commas, quotes, whitespace
+  [[ -z "$line" ]] && continue
+  if [[ ! "$line" =~ ^[-._/#A-Za-z0-9]+$ ]]; then
+    echo "Invalid log group name in log-groups.txt: '$line'" >&2
+    exit 1
+  fi
+  LOG_GROUPS+=("$line")
+done < "$SCRIPT_DIR/log-groups.txt"
+if [[ ${#LOG_GROUPS[@]} -eq 0 ]]; then
+  echo "No log groups listed in log-groups.txt" >&2
+  exit 1
+fi
+# -------------------------------------------------------
 
 for LG in "${LOG_GROUPS[@]}"; do
   aws logs delete-subscription-filter --region "$REGION" \

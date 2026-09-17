@@ -42,18 +42,31 @@ ROLE_NAME="${FUNCTION_NAME}-role"
 FILTER_NAME="failure-notifier"
 # Explicit failure matches. Filter patterns are case-sensitive; ? means OR.
 # Edit this once you've seen what your code actually writes.
-FILTER_PATTERN='?"Status: Failed" ?"Status: FAILED" ?"Status: failed"'
+# "Failed" covers both "Failed in <step> - <error>" and "Status: Failed".
+FILTER_PATTERN='?"Failed" ?"Status: FAILED" ?"Status: failed"'
 RESERVED_CONCURRENCY=2
 
-LOG_GROUPS=(
-    "/aws/lambda/PDFAccessibility-PdfChunkSplitterLambdaFDB27681-TfDtfjTyEwjs",
-    "/aws/lambda/PDFAccessibility-PdfMergerLambda3075CEA9-wsiSWTIlDCFU",
-    "/ecs/pdf-remediation/adobe-autotag",
-    "/ecs/pdf-remediation/alt-text-generator"
-)
 # -----------------------------------
 
+# ---------- Log groups (from log-groups.txt) ----------
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_GROUPS=()
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line="${line%%#*}"                     # drop comments
+  line="$(printf '%s' "$line" | tr -d ',"'"'"' \t\r')"  # drop commas, quotes, whitespace
+  [[ -z "$line" ]] && continue
+  if [[ ! "$line" =~ ^[-._/#A-Za-z0-9]+$ ]]; then
+    echo "Invalid log group name in log-groups.txt: '$line'" >&2
+    exit 1
+  fi
+  LOG_GROUPS+=("$line")
+done < "$SCRIPT_DIR/log-groups.txt"
+if [[ ${#LOG_GROUPS[@]} -eq 0 ]]; then
+  echo "No log groups listed in log-groups.txt" >&2
+  exit 1
+fi
+# -------------------------------------------------------
+
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 echo "Profile: $PROFILE  Account: $ACCOUNT_ID  Region: $REGION"
 
@@ -72,6 +85,9 @@ aws logs test-metric-filter --region "$REGION" \
     "File: a.pdf, Status: succeeded" \
     "File: b.pdf, Status: Failed" \
     "File: c.pdf, Status: FAILED" \
+    "2026-09-17 15:11:03,178 - ERROR - File: 1303997, Status: Failed in First ECS task - Adobe API Error" \
+    "Failed in First ECS task - Adobe API Error" \
+    "Processing complete" \
   --query 'matches[].eventMessage' --output text
 
 echo "==> IAM role"

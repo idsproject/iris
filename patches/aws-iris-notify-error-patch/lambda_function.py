@@ -40,13 +40,24 @@ FAILED_LINE = re.compile(r"\bFailed\b[\s:\-]*(?:in\s+)?(?P<detail>.*)")
 # Safety net in case the subscription filter is ever loosened.
 SUCCESS_STATUSES = {"succeeded"}
 
-# Friendly names for each pipeline step, keyed by log group.
-STEP_NAMES = {
-    "/aws/lambda/PDFAccessibility-PdfChunkSplitterLambdaFDB27681-TfDtfjTyEwjs": "chunker",
-    "/aws/lambda/PDFAccessibility-PdfMergerLambda3075CEA9-wsiSWTIlDCFU": "merger",
-    "/ecs/pdf-remediation/adobe-autotag": "adobe-autotag",
-    "/ecs/pdf-remediation/alt-text-generator": "alt-text-generator",
-}
+# Friendly names for each pipeline step. Matched as case-insensitive text
+# inside the log group name, so generated suffixes (e.g. "-TfDtfjTyEwjs") don't matter.
+STEP_KEYWORDS = [
+    ("chunksplitter", "chunker"),
+    ("merger", "merger"),
+    ("autotag", "adobe-autotag"),
+    ("alt-text", "alt-text-generator"),
+    ("alttext", "alt-text-generator"),
+]
+
+
+def step_name(log_group):
+    lowered = log_group.lower()
+    for keyword, name in STEP_KEYWORDS:
+        if keyword in lowered:
+            return name
+    return log_group
+
 
 SECRET_ID = os.environ.get("SECRET_ID", "/myapp/iris-notification")
 SECRET_CACHE_SECONDS = int(os.environ.get("SECRET_CACHE_SECONDS", "300"))
@@ -165,7 +176,7 @@ def handler(event, context):
         return {"sent": 0}
 
     log_group = payload.get("logGroup", "unknown")
-    step = STEP_NAMES.get(log_group, log_group)
+    step = step_name(log_group)
     pings = [
         {
             "status": "FAILED",
@@ -203,4 +214,4 @@ def handler(event, context):
             f"{len(failed_pings)} of {len(pings)} pings failed: {failed_pings}"
         )
 
-    return {"sent": len(pings)}gg
+    return {"sent": len(pings)}
