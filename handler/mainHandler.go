@@ -28,7 +28,8 @@ type Notify struct {
 	Sender  string `json:"sender"`
 	Status  string `json:"status"`
 	File    string `json:"file"`
-	Message any `json:"message"`
+	Message string `json:"message"`
+	Data    any    `json:"payload,omitempty"`
 }
 
 type ReportResponse struct {
@@ -82,7 +83,7 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 			Status:   http.StatusBadRequest,
 			Message:  "Could not parse data",
 			Error:    err,
-			CallPath: "HandleUpload/json/Decode",
+			CallPath: "HandleNotify/json/Decode",
 		}
 		util.EndpointError(responseData, responseMessage)
 		return
@@ -111,7 +112,7 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 				Status:   http.StatusInternalServerError,
 				Message:  "Error downloading to AWS",
 				Error:    err,
-				CallPath: "HandleUpload/aws/DownloadArticle",
+				CallPath: "HandleNotify/aws/DownloadArticle",
 			}
 			util.EndpointError(responseData, responseMessage)
 			return
@@ -126,11 +127,14 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 			}
 			return
 		}
+	case "remediation error":
+		handler.Logger.Info("remedation error recieved", "payload", message)
 	default:
 		err = util.Error(w, r, http.StatusBadRequest, "Unknown message")
 		if err != nil {
 			handler.Logger.Error("HandleNotify/util/Error", "err", err)
 		}
+		return
 	}
 
 	err = util.Success(w, r, "notified")
