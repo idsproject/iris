@@ -107,6 +107,13 @@ def parse_failed_detail(detail):
     return {"failed_in": None, "error": detail or None}
 
 
+def with_pdf_extension(file_name):
+    """The pipeline logs IDs like "1303997"; every file is a PDF, so add ".pdf"."""
+    if file_name and not file_name.lower().endswith(".pdf"):
+        return f"{file_name}.pdf"
+    return file_name
+
+
 def extract_failures(log_events):
     """Return one entry per failure in the batch: {"file": ..., "details": {...}}."""
     failures = []
@@ -124,7 +131,7 @@ def extract_failures(log_events):
             first_word = re.split(r"[\s,.;:]+", status_text, maxsplit=1)[0]
             if first_word.lower() in SUCCESS_STATUSES:
                 continue
-            file_name = status_match.group("file").strip()
+            file_name = with_pdf_extension(status_match.group("file").strip())
             # The same file logged as failed twice in one batch gets one ping.
             if file_name in seen_files:
                 continue
