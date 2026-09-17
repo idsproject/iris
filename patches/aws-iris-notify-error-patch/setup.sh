@@ -46,10 +46,10 @@ FILTER_PATTERN='?"Status: Failed" ?"Status: FAILED" ?"Status: failed"'
 RESERVED_CONCURRENCY=2
 
 LOG_GROUPS=(
-  "/aws/lambda/PDFAccessibility-PdfChunkSplitterLambdaFDB27681-TfDtfjTyEwjs"
-  "/aws/lambda/PDFAccessibility-PdfMergerLambda3075CEA9-wsiSWTIlDCFU"
-  "/ecs/pdf-remediation/adobe-autotag"
-  "/ecs/pdf-remediation/alt-text-generator"
+    "/aws/lambda/PDFAccessibility-PdfChunkSplitterLambdaFDB27681-TfDtfjTyEwjs",
+    "/aws/lambda/PDFAccessibility-PdfMergerLambda3075CEA9-wsiSWTIlDCFU",
+    "/ecs/pdf-remediation/adobe-autotag",
+    "/ecs/pdf-remediation/alt-text-generator"
 )
 # -----------------------------------
 

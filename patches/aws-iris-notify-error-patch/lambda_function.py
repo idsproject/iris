@@ -28,8 +28,14 @@ import boto3  # included in the Lambda Python runtime
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Mirrors the Insights query: parse @message "File: *, Status: *"
-LINE = re.compile(r"File:\s*(?P<file>.*?),\s*Status:\s*(?P<status>[^\s,.;]+)")
+# Status lines, mirroring the Insights query: parse @message "File: *, Status: *"
+# The status is everything after "Status:", e.g. "succeeded" or
+# "Failed in First ECS task - Adobe API Error" (the latestStatus column in Insights).
+STATUS_LINE = re.compile(r"File:\s*(?P<file>.*?),\s*Status:\s*(?P<status>.*)")
+
+# Error lines, e.g. "Failed in First ECS task - Adobe API Error".
+# search() is used, so Lambda's "[ERROR] <time> <request id>" prefix is fine.
+FAILED_LINE = re.compile(r"\bFailed\b[\s:\-]*(?:in\s+)?(?P<detail>.*)")
 
 # Safety net in case the subscription filter is ever loosened.
 SUCCESS_STATUSES = {"succeeded"}
@@ -81,32 +87,53 @@ def clear_secret_cache():
     _secret_cache["value"] = None
 
 
+def parse_failed_detail(detail):
+    """Split "First ECS task - Adobe API Error" into where it failed and the error."""
+    detail = detail.strip()
+    if " - " in detail:
+        failed_in, error = detail.split(" - ", 1)
+        return {"failed_in": failed_in.strip(), "error": error.strip()}
+    return {"failed_in": None, "error": detail or None}
+
+
 def extract_failures(log_events):
-    """Return one entry per failed file in the batch."""
+    """Return one entry per failure in the batch: {"file": ..., "details": {...}}."""
     failures = []
     seen_files = set()
     for e in log_events:
         log_line = e.get("message", "")
-        m = LINE.search(log_line)
-        if m:
-            status = m.group("status").strip()
-            if status.lower() in SUCCESS_STATUSES:
+        details = {"timestamp": e.get("timestamp"), "log_line": log_line[:500]}
+
+        status_match = STATUS_LINE.search(log_line)
+        failed_match = None if status_match else FAILED_LINE.search(log_line)
+
+        if status_match:
+            # "File: x.pdf, Status: Failed in First ECS task - Adobe API Error"
+            status_text = status_match.group("status").strip()
+            first_word = re.split(r"[\s,.;:]+", status_text, maxsplit=1)[0]
+            if first_word.lower() in SUCCESS_STATUSES:
                 continue
-            file_name = m.group("file").strip()
+            file_name = status_match.group("file").strip()
             # The same file logged as failed twice in one batch gets one ping.
             if file_name in seen_files:
                 continue
             seen_files.add(file_name)
+            details["reported_status"] = first_word or "unknown"
+            detail_match = FAILED_LINE.search(status_text)
+            if detail_match and detail_match.group("detail").strip():
+                details.update(parse_failed_detail(detail_match.group("detail")))
+        elif failed_match:
+            # "Failed in First ECS task - Adobe API Error" with no file name in the line
+            file_name = "unknown"
+            details["reported_status"] = "Failed"
+            details.update(parse_failed_detail(failed_match.group("detail")))
         else:
-            # The filter matched but the line isn't in the expected format.
+            # The filter matched but the line isn't in either expected format.
             # Report it anyway rather than silently dropping a failure.
-            file_name, status = "unknown", "unknown"
-        failures.append({
-            "file": file_name,
-            "reported_status": status,
-            "timestamp": e.get("timestamp"),
-            "log_line": log_line[:500],
-        })
+            file_name = "unknown"
+            details["reported_status"] = "unknown"
+
+        failures.append({"file": file_name, "details": details})
     return failures
 
 
@@ -141,7 +168,7 @@ def handler(event, context):
     step = STEP_NAMES.get(log_group, log_group)
     pings = [
         {
-            "status": "failed",
+            "status": "FAILED",
             "sender": "aws",
             "file": failure["file"],
             "message": "remediation error",
@@ -149,9 +176,7 @@ def handler(event, context):
                 "step": step,
                 "log_group": log_group,
                 "log_stream": payload.get("logStream"),
-                "reported_status": failure["reported_status"],
-                "timestamp": failure["timestamp"],
-                "log_line": failure["log_line"],
+                **failure["details"],
             },
         }
         for failure in failures
@@ -178,4 +203,4 @@ def handler(event, context):
             f"{len(failed_pings)} of {len(pings)} pings failed: {failed_pings}"
         )
 
-    return {"sent": len(pings)}
+    return {"sent": len(pings)}gg

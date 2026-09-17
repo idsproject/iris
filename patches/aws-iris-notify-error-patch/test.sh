@@ -43,6 +43,7 @@ data = {
     "logEvents": [
         {"id": "1", "timestamp": now, "message": "File: test-document.pdf, Status: Failed"},
         {"id": "2", "timestamp": now, "message": "File: other.pdf, Status: succeeded"},
+        {"id": "3", "timestamp": now, "message": "2026-09-17 15:11:03,178 - ERROR - File: test-0000001, Status: Failed in First ECS task - Adobe API Error"},
     ],
 }
 encoded = base64.b64encode(gzip.compress(json.dumps(data).encode())).decode()
@@ -58,5 +59,5 @@ aws lambda invoke --region "$REGION" \
 
 echo
 echo "Function returned: $(cat "$OUT")"
-echo "Expected: {\"sent\": 1}"
+echo "Expected: {\"sent\": 2}"
 rm -f "$OUT"
