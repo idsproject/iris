@@ -25,6 +25,7 @@ const fileSizeThreshold = 50  // in MB
 const PricePerPage = 0.15
 
 type Notify struct {
+	Data    any    `json:"payload,omitempty"`
 	Sender  string `json:"sender"`
 	Status  string `json:"status"`
 	File    string `json:"file"`
@@ -82,7 +83,7 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 			Status:   http.StatusBadRequest,
 			Message:  "Could not parse data",
 			Error:    err,
-			CallPath: "HandleUpload/json/Decode",
+			CallPath: "HandleNotify/json/Decode",
 		}
 		util.EndpointError(responseData, responseMessage)
 		return
@@ -111,7 +112,7 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 				Status:   http.StatusInternalServerError,
 				Message:  "Error downloading to AWS",
 				Error:    err,
-				CallPath: "HandleUpload/aws/DownloadArticle",
+				CallPath: "HandleNotify/aws/DownloadArticle",
 			}
 			util.EndpointError(responseData, responseMessage)
 			return
@@ -126,11 +127,32 @@ func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request)
 			}
 			return
 		}
+	case "remediation error":
+		handler.Logger.Info("remedation error received", "payload", message)
+		file, createErr := os.Create(safePath + ".error") // #nosec G304 G703
+		if createErr != nil {
+			handler.Logger.Error("HandleNotify/os/Create", "err", createErr)
+			err = util.Error(w, r, http.StatusInternalServerError, "Unable to create error file")
+			if err != nil {
+				handler.Logger.Error("HandleNotify/util/Error", "err", err)
+			}
+			return
+		}
+		closeErr := file.Close()
+		if closeErr != nil {
+			handler.Logger.Error("HandleNotify/os/Close", "err", closeErr)
+			err = util.Error(w, r, http.StatusInternalServerError, "Unable to create error file")
+			if err != nil {
+				handler.Logger.Error("HandleNotify/util/Error", "err", err)
+			}
+			return
+		}
 	default:
 		err = util.Error(w, r, http.StatusBadRequest, "Unknown message")
 		if err != nil {
 			handler.Logger.Error("HandleNotify/util/Error", "err", err)
 		}
+		return
 	}
 
 	err = util.Success(w, r, "notified")
@@ -261,16 +283,34 @@ func (handler *MainHandler) HandleStatus(w http.ResponseWriter, r *http.Request)
 
 		return
 	} else if errors.Is(statErr, os.ErrNotExist) {
-		response.Add("status", "success")
-		response.Add("message", "file not found")
-		response.Add("done", false)
+		if _, newStatErr := os.Stat(safePath + ".error"); newStatErr == nil { // #nosec G703
+			response.Add("status", "success")
+			response.Add("message", "error during remediation")
+			response.Add("done", false)
+			response.Add("remediation_error", true)
 
-		err := response.WriteResponse(w, r, http.StatusOK)
-		if err != nil {
-			handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
+			err := response.WriteResponse(w, r, http.StatusOK)
+			if err != nil {
+				handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
+			}
+			return
+		} else if errors.Is(newStatErr, os.ErrNotExist) {
+			response.Add("status", "success")
+			response.Add("message", "file not found")
+			response.Add("done", false)
+
+			err := response.WriteResponse(w, r, http.StatusOK)
+			if err != nil {
+				handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
+			}
+
+			return
+		} else {
+			handler.Logger.Error("HandleStatus/os/Stat", "err", statErr)
+			response.Add("status", "error")
+			response.Add("message", "error checking error file")
+			response.Add("done", false)
 		}
-
-		return
 	} else {
 		handler.Logger.Error("HandleStatus/os/Stat", "err", statErr)
 		response.Add("status", "error")

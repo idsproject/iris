@@ -1,0 +1,696 @@
+openapi: 3.0.3
+
+info:
+  title: IRIS
+  version: "1.0.0"
+  description: |
+    API for the IRIS remediation server. It standardizes input/output between
+    calling systems and the AWS pipeline that performs PDF accessibility
+    remediation, and does light pre-processing such as page counting and cost
+    estimation.
+
+    ## Flow
+
+    1. A caller `POST`s a PDF to `/v1/upload`. IRIS counts its pages, records a
+       tracking row, and puts the file in S3 under `pdf/{filename}`.
+    2. The AWS remediation pipeline processes the file and calls back to
+       `/v1/notify` — `remediation complete` on success, `remediation error` on
+       failure.
+    3. The caller polls `/v1/status/{filename}` until `done` is `true` (or
+       `remediation_error` is `true`), then retrieves the file from
+       `/v1/download/{filename}`.
+    4. Once the caller has the file it posts `download complete` to
+       `/v1/notify`, which removes the local copy.
+
+    ## Authentication
+
+    IRIS performs **no authentication of its own**. Deployments run behind an
+    API gateway that authenticates callers before traffic reaches this service.
+    The convention used by the reference deployment is a long-lived key in an
+    `X-API-Key` header, documented here so clients know what to send; if you
+    self-host IRIS, implement your own auth at the gateway or in front of it.
+
+  contact:
+    name: Andromeda Sawtelle
+    email: asawtelle@geneseo.edu
+  license:
+    name: See LICENSE in the repository
+    url: https://github.com/idsproject/iris/blob/main/LICENSE
+
+servers:
+  - url: "{scheme}://{host}"
+    description: |
+      A deployed instance. There is no canonical public host — point this at
+      your own API gateway, which sits in front of IRIS and authenticates.
+    variables:
+      scheme:
+        default: https
+        enum: [https, http]
+      host:
+        default: iris.your-domain.org
+  - url: http://localhost:8080
+    description: |
+      Local development. Port comes from `$SERVERPORT`; the `make local`
+      target publishes the container on 8080.
+
+tags:
+  - name: health
+    description: Liveness and crawler endpoints
+  - name: articles
+    description: Uploading, tracking and retrieving remediated PDFs
+  - name: callbacks
+    description: Endpoints called by the AWS remediation pipeline
+  - name: reporting
+    description: Usage and cost reporting
+
+security:
+  - ApiKeyAuth: []
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness check
+      description: |
+        Root-level liveness probe, registered directly on the router rather
+        than under `/v1`. Always returns `OK` if the process is serving.
+      operationId: getHealthz
+      security: []
+      responses:
+        "200":
+          description: Service is up
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
+
+  /robots.txt:
+    get:
+      tags: [health]
+      summary: Crawler directives
+      description: Serves the repository `robots.txt`, which disallows all crawlers.
+      operationId: getRobotsTxt
+      security: []
+      responses:
+        "200":
+          description: The robots.txt file
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  User-agent: *
+                  Disallow: /
+
+  /v1/healthz:
+    get:
+      tags: [health]
+      summary: Liveness check (versioned)
+      description: |
+        Identical to the root `/healthz`, exposed under the `/v1` prefix so
+        clients scoped to the versioned API have a probe available.
+      operationId: getV1Healthz
+      security: []
+      responses:
+        "200":
+          description: Service is up
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
+
+  /v1/upload:
+    post:
+      tags: [articles]
+      summary: Upload a PDF for remediation
+      description: |
+        Accepts a PDF as multipart form data, counts its pages, stores it in
+        S3 under `pdf/{filename}`, and records a tracking row against the
+        supplied library and transaction.
+
+        The request body is capped at 700 MB; up to 50 MB is buffered in memory
+        and the remainder spills to temporary files. A body over the cap fails
+        during form parsing and is reported as a `400`, not a `413`.
+
+        The stored object key — and therefore the `filename` used by
+        `/v1/status/{filename}` and `/v1/download/{filename}` — is the
+        `filename` of the uploaded part, not a server-generated identifier.
+      operationId: uploadArticle
+      parameters:
+        - $ref: "#/components/parameters/LibraryIdHeader"
+        - name: transaction
+          in: query
+          required: true
+          description: Caller's transaction identifier, stored on the tracking row.
+          schema:
+            type: string
+          example: "US-ngenou"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The PDF to remediate. Must be readable as a PDF.
+            encoding:
+              file:
+                contentType: application/pdf
+      responses:
+        "200":
+          description: File accepted, uploaded to S3 and tracked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessMessage"
+              example:
+                status: success
+                message: uploaded
+        "400":
+          description: |
+            Malformed request. Occurs when the multipart body cannot be parsed
+            (including bodies over the 700 MB cap), the `file` part is missing,
+            the `transaction` query parameter is absent, or the `X-Library-Id`
+            header is absent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+              examples:
+                unparseableBody:
+                  value: {status: error, message: Could not parse data}
+                missingFilePart:
+                  value: {status: error, message: Could not parse file}
+                missingTransaction:
+                  value: {status: error, message: need transaction in url query}
+                missingLibraryId:
+                  value: {status: error, message: need libraryid in header}
+        "500":
+          description: |
+            The upload could not be completed: the file did not open as a PDF,
+            the S3 upload failed, or the tracking row could not be written.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+              examples:
+                notAPdf:
+                  value: {status: error, message: Error opening as pdf}
+                s3Failure:
+                  value: {status: error, message: Error uploading to AWS}
+                trackingFailure:
+                  value: {status: error, message: Error updating tracking}
+
+  /v1/status/{filename}:
+    get:
+      tags: [articles]
+      summary: Check remediation status of a file
+      description: |
+        Reports whether a remediated file has landed in the local download
+        directory. Poll this after uploading.
+
+        Three outcomes are all reported as `200`:
+
+        | Condition | `done` | `remediation_error` | `message` |
+        |---|---|---|---|
+        | Remediated file present | `true` | absent | `file found` |
+        | Pipeline reported a failure | `false` | `true` | `error during remediation` |
+        | Neither yet | `false` | absent | `file not found` |
+
+        The failure case is detected by the presence of a `{filename}.error`
+        marker written by `/v1/notify` when it receives `remediation error`.
+      operationId: getArticleStatus
+      parameters:
+        - $ref: "#/components/parameters/FilenamePath"
+      responses:
+        "200":
+          description: Status determined
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              examples:
+                ready:
+                  summary: Remediated file is ready to download
+                  value: {status: success, message: file found, done: true}
+                remediationError:
+                  summary: Pipeline reported a failure for this file
+                  value:
+                    status: success
+                    message: error during remediation
+                    done: false
+                    remediation_error: true
+                pending:
+                  summary: Still processing
+                  value: {status: success, message: file not found, done: false}
+        "400":
+          description: |
+            The filename escaped the download directory once joined to it
+            (for example a path containing `../`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+              example:
+                status: error
+                message: Invalid file name
+        "500":
+          description: The download directory could not be inspected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              example:
+                status: error
+                message: error checking file
+                done: false
+
+  /v1/download/{filename}:
+    get:
+      tags: [articles]
+      summary: Download a remediated file
+      description: |
+        Fetches `result/COMPLIANT_{filename}` from S3 into the local download
+        directory if it is present there, deletes the S3 copy, and serves the
+        local file.
+
+        The response is served by Go's static file handler, so it honours
+        `Range`, `If-Modified-Since` and `If-None-Match` and may answer `206`
+        or `304` accordingly. When no local file exists — because remediation
+        has not finished — the handler responds `404` with a plain-text body
+        rather than the JSON envelope used elsewhere. Call
+        `/v1/status/{filename}` first to avoid this.
+
+        After successfully retrieving the file, post `download complete` to
+        `/v1/notify` so the local copy is cleaned up.
+      operationId: downloadArticle
+      parameters:
+        - $ref: "#/components/parameters/FilenamePath"
+      responses:
+        "200":
+          description: The remediated PDF
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial content, when the request carried a `Range` header
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: Not modified, for a conditional request
+        "404":
+          description: |
+            No file by that name in the download directory. Plain text, not JSON.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: 404 page not found
+        "500":
+          description: The S3 lookup or download failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+              example:
+                status: error
+                message: Error downloading to AWS
+
+  /v1/notify:
+    post:
+      tags: [callbacks]
+      summary: Receive a pipeline or client callback
+      description: |
+        Callback sink driven by the `message` field of the body. Called by the
+        AWS remediation lambdas on completion or failure, and by the client
+        once it has collected its file.
+
+        | `message` | Effect |
+        |---|---|
+        | `remediation complete` | Pulls `result/COMPLIANT_{file}` from S3 into the download directory |
+        | `remediation error` | Writes a `{file}.error` marker, which `/v1/status` reports as `remediation_error` |
+        | `download complete` | Deletes the local copy of `{file}` |
+
+        Any other value is rejected as `Unknown message`.
+      operationId: notify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotifyRequest"
+            examples:
+              remediationComplete:
+                summary: Success callback from the pipeline
+                value:
+                  sender: aws
+                  file: 1303997.pdf
+                  status: success
+                  message: remediation complete
+              remediationError:
+                summary: Failure callback from the CloudWatch subscription lambda
+                value:
+                  status: FAILED
+                  sender: aws
+                  file: 1303997.pdf
+                  message: remediation error
+                  payload:
+                    step: adobe-autotag
+                    log_group: /aws/lambda/pdf-autotag
+                    log_stream: "2026/09/17/[$LATEST]abc123"
+                    timestamp: 1758124800000
+                    reported_status: Failed
+                    failed_in: First ECS task
+                    error: Adobe API Error
+              downloadComplete:
+                summary: Client confirming it has the file
+                value:
+                  sender: client
+                  file: 1303997.pdf
+                  status: success
+                  message: download complete
+      responses:
+        "200":
+          description: Callback handled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessMessage"
+              example:
+                status: success
+                message: notified
+        "400":
+          description: |
+            The body was not valid JSON, `file` escaped the download directory
+            once joined to it, or `message` was not one of the recognised values.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+              examples:
+                unparseableBody:
+                  value: {status: error, message: Could not parse data}
+                badFilename:
+                  value: {status: error, message: Invalid file name}
+                unknownMessage:
+                  value: {status: error, message: Unknown message}
+        "500":
+          description: |
+            The action implied by `message` failed: the S3 download errored,
+            the local file could not be removed, or the `.error` marker could
+            not be created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+              examples:
+                downloadFailed:
+                  value: {status: error, message: Error downloading to AWS}
+                cleanupFailed:
+                  value: {status: error, message: Unable to clean up files}
+                markerFailed:
+                  value: {status: error, message: Unable to create error file}
+
+  /v1/report:
+    get:
+      tags: [reporting]
+      summary: Usage and cost report for a date range
+      description: |
+        Returns every tracking row for the calling library whose `processed`
+        timestamp falls within the range, along with the total page count and
+        the cost those pages represent at $0.15 per page.
+
+        Both bounds are inclusive and are parsed as `YYYY-MM-DD`, so they
+        resolve to midnight UTC. An `end` of `2026-09-17` therefore excludes
+        everything processed during that day; pass the following date to
+        include it.
+      operationId: getReport
+      parameters:
+        - $ref: "#/components/parameters/LibraryIdHeader"
+        - name: start
+          in: query
+          required: true
+          description: Inclusive start of the range, `YYYY-MM-DD`.
+          schema:
+            type: string
+            format: date
+          example: "2026-09-01"
+        - name: end
+          in: query
+          required: true
+          description: Inclusive start of the day the range ends at, `YYYY-MM-DD`.
+          schema:
+            type: string
+            format: date
+          example: "2026-10-01"
+      responses:
+        "200":
+          description: The report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportEnvelope"
+              example:
+                status: success
+                result:
+                  data:
+                    - processed: "2026-09-04T14:22:11Z"
+                      library_id: LIB-102
+                      transaction_id: TXN-40219
+                      page_count: 12
+                      paid: false
+                    - processed: "2026-09-11T09:03:47Z"
+                      library_id: LIB-102
+                      transaction_id: TXN-40288
+                      page_count: 30
+                      paid: false
+                  total_pages: 42
+                  total_cost: 6.3
+        "400":
+          description: |
+            The `X-Library-Id` header was absent, `start` or `end` was absent,
+            or either date was not in `YYYY-MM-DD` form.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+              examples:
+                missingLibraryId:
+                  value: {status: error, message: need libraryid in header}
+                missingStart:
+                  value: {status: error, message: need start in url query}
+                missingEnd:
+                  value: {status: error, message: need end in url query}
+                badStartFormat:
+                  value: {status: error, message: need start in YYYY-MM-DD format}
+                badEndFormat:
+                  value: {status: error, message: need end in YYYY-MM-DD format}
+        "500":
+          description: The tracking query failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+              example:
+                status: error
+                message: error getting report data
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        Long-lived API key. IRIS does not verify this itself; it runs behind an
+        API gateway that authenticates callers. Self-hosters should implement
+        their own auth.
+
+  parameters:
+    LibraryIdHeader:
+      name: X-Library-Id
+      in: header
+      required: true
+      description: Identifier of the library the request is made on behalf of.
+      schema:
+        type: string
+      example: LIB-102
+
+    FilenamePath:
+      name: filename
+      in: path
+      required: true
+      description: |
+        Name of the file as uploaded, including the `.pdf` extension. Must not
+        contain path segments that escape the download directory.
+      schema:
+        type: string
+      example: 1303997.pdf
+
+  schemas:
+    SuccessMessage:
+      type: object
+      description: Standard success envelope.
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          enum: [success]
+        message:
+          description: |
+            Human-readable outcome. Usually a string, but some endpoints place
+            a structured value here.
+          example: uploaded
+      additionalProperties: true
+
+    ErrorMessage:
+      type: object
+      description: Standard error envelope, used for every JSON error response.
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          enum: [error]
+        message:
+          type: string
+          description: Human-readable reason the request failed.
+          example: Could not parse data
+
+    StatusResponse:
+      type: object
+      description: Result of a remediation status check.
+      required: [status, message, done]
+      properties:
+        status:
+          type: string
+          enum: [success, error]
+          description: |
+            `success` means the check itself completed, not that the file is
+            ready — read `done` for that.
+        message:
+          type: string
+          enum:
+            - file found
+            - error during remediation
+            - file not found
+            - error checking file
+            - error checking error file
+        done:
+          type: boolean
+          description: True only when the remediated file is available to download.
+        remediation_error:
+          type: boolean
+          description: |
+            Present and `true` only when the pipeline reported a failure for
+            this file. Absent otherwise.
+
+    NotifyRequest:
+      type: object
+      description: Callback body posted to `/v1/notify`.
+      required: [sender, status, file, message]
+      properties:
+        sender:
+          type: string
+          description: Origin of the callback.
+          example: aws
+        status:
+          type: string
+          description: |
+            Sender's own status label. Not interpreted by IRIS, which
+            branches on `message` alone.
+          example: success
+        file:
+          type: string
+          description: |
+            Filename the callback concerns, including extension. Resolved
+            against the download directory and rejected if it escapes it.
+          example: 1303997.pdf
+        message:
+          type: string
+          description: Selects the action IRIS takes.
+          enum:
+            - remediation complete
+            - remediation error
+            - download complete
+        payload:
+          description: |
+            Optional sender-defined context. The failure lambda uses it to
+            carry the pipeline step and the matched log line; IRIS logs it but
+            does not otherwise act on it.
+          type: object
+          additionalProperties: true
+          example:
+            step: adobe-autotag
+            log_group: /aws/lambda/pdf-autotag
+            error: Adobe API Error
+
+    Tracking:
+      type: object
+      description: One recorded remediation request.
+      required: [processed, library_id, transaction_id, page_count, paid]
+      properties:
+        processed:
+          type: string
+          format: date-time
+          description: When the upload was recorded.
+          example: "2026-09-04T14:22:11Z"
+        library_id:
+          type: string
+          description: Library the upload was attributed to, from `X-Library-Id`.
+          example: LIB-102
+        transaction_id:
+          type: string
+          description: Caller's transaction identifier, from the `transaction` query parameter.
+          example: TXN-40219
+        page_count:
+          type: integer
+          description: Pages counted in the uploaded PDF.
+          example: 12
+        paid:
+          type: boolean
+          description: Whether this row has been settled. Always false on insert.
+          example: false
+
+    Report:
+      type: object
+      description: Tracking rows for a range, with their totals.
+      required: [data, total_pages, total_cost]
+      properties:
+        data:
+          type: array
+          description: Matching tracking rows, unordered.
+          items:
+            $ref: "#/components/schemas/Tracking"
+        total_pages:
+          type: integer
+          description: Sum of `page_count` across `data`.
+          example: 42
+        total_cost:
+          type: number
+          format: double
+          description: |
+            `total_pages` × $0.15. Plain float arithmetic, so the value may
+            carry binary floating-point rounding — treat it as an estimate
+            rather than a settled figure.
+          example: 6.3
+
+    ReportEnvelope:
+      type: object
+      required: [status, result]
+      properties:
+        status:
+          type: string
+          enum: [success]
+        result:
+          $ref: "#/components/schemas/Report"
