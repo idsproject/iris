@@ -13,7 +13,7 @@ import (
 	"github.com/idsproject/iris/aws"
 	"github.com/idsproject/iris/util"
 
-	"github.com/idsproject/iris/internal/data"
+	"github.com/idsproject/iris/data"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ledongthuc/pdf"
@@ -40,15 +40,13 @@ type ReportResponse struct {
 
 type MainHandler struct {
 	Logger        *slog.Logger
-	LogsModel     *data.LogsModel
-	TrackingModel *data.TrackingModel
+    Queries *data.Queries
 }
 
-func CreateMainHandler(logger *slog.Logger, logsModel *data.LogsModel, trackingModel *data.TrackingModel) *MainHandler {
+func CreateMainHandler(logger *slog.Logger, queries *data.Queries) *MainHandler {
 	return &MainHandler{
 		Logger:        logger,
-		LogsModel:     logsModel,
-		TrackingModel: trackingModel,
+        Queries: queries,
 	}
 }
 
@@ -239,7 +237,13 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	err = handler.TrackingModel.InsertTracking(libraryId, transactionId, pageCount, false)
+    newTracking := data.InsertTrackingParams {
+        Libraryid = libraryId,
+        Transactionid = transactionId,
+        Pagecount = pageCount,
+    }
+
+	_, err = handler.Queries.InsertTracking(r.Context, newTracking)
 	if err != nil {
 		responseMessage = util.ResponseMessage{
 			Status:   http.StatusInternalServerError,
@@ -410,7 +414,7 @@ func (handler *MainHandler) HandleReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	info, err := handler.TrackingModel.GetReportFromRange(libraryId, startTime, endTime)
+	info, err := handler.Queries.GetReportFromRange(libraryId, startTime, endTime)
 	if err != nil {
 		responseMessage = util.ResponseMessage{
 			Status:   http.StatusInternalServerError,

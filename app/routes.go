@@ -10,8 +10,8 @@ import (
 )
 
 func (app *Application) routes() http.Handler {
-	mainHandler := handler.CreateMainHandler(app.Logger, &app.Models.Logs, &app.Models.Tracking)
-	testHandler := handler.CreateTestHandler(app.Logger, &app.Models.Logs)
+	mainHandler := handler.CreateMainHandler(app.Logger, app.Queries)
+	testHandler := handler.CreateTestHandler(app.Logger, app.Queries)
 
 	router := chi.NewRouter()
 

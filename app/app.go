@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"os"
 	"sync"
-
-	"github.com/idsproject/iris/internal/data"
+    "errors"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
 // Application holds the shared dependencies of the running service:
@@ -19,18 +21,8 @@ import (
 // tracking background tasks during shutdown.
 type Application struct {
 	Logger *slog.Logger
-	Models data.Models
+	Queries *data.Queries
 	Wg     sync.WaitGroup
-}
-
-// GetLogger returns the application logger.
-func (app *Application) GetLogger() *slog.Logger {
-	return app.Logger
-}
-
-// GetModels returns the data-access models.
-func (app *Application) GetModels() data.Models {
-	return app.Models
 }
 
 // Run starts the service: it opens the database pool,
@@ -46,9 +38,11 @@ func Run(ctx context.Context) error {
 	}
 	defer dbpool.Close()
 
+    queries := data.New(dbpool)
+
 	app := &Application{
 		Logger: logger,
-		Models: data.NewModels(dbpool),
+		Queries: queries,
 	}
 
 	err = app.serve()
@@ -63,11 +57,32 @@ func Run(ctx context.Context) error {
 func RunMigrations() error {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	from, to, dirty, err := data.RunMigrations(os.Getenv("MIGRATIONS_DIR"), os.Getenv("DB_URL"))
+    var from, to uint
+	var dirty bool
+
+	migration, err := migrate.New(migrationDir, connectionStr)
 	if err != nil {
-		logger.Error("Failed migrations", "err", err)
-		return err
+		logger.Error("failed to create migration", "err", err)
+        return err
 	}
+
+	from, dirty, err = migration.Version()
+	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
+		logger.Error("failed to get from version", "err", err)
+        return err
+	}
+
+	err = migration.Up()
+	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		logger.Error("failed to run migrations", "err", err)
+	}
+
+	to, dirty, err = migration.Version()
+	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
+		logger.Errorf("failed to get to version", "err", err)
+        return err
+	}
+
 	logger.Info("Migrations success", "fromVersion", from, "toVersion", to, "dirty", dirty)
 
 	return nil
