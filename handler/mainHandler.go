@@ -13,7 +13,7 @@ import (
 	"github.com/idsproject/iris/aws"
 	"github.com/idsproject/iris/util"
 
-	"github.com/idsproject/iris/internal/data"
+	"github.com/idsproject/iris/data"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ledongthuc/pdf"
@@ -39,16 +39,14 @@ type ReportResponse struct {
 }
 
 type MainHandler struct {
-	Logger        *slog.Logger
-	LogsModel     *data.LogsModel
-	TrackingModel *data.TrackingModel
+	Logger  *slog.Logger
+	Queries *data.Queries
 }
 
-func CreateMainHandler(logger *slog.Logger, logsModel *data.LogsModel, trackingModel *data.TrackingModel) *MainHandler {
+func CreateMainHandler(logger *slog.Logger, queries *data.Queries) *MainHandler {
 	return &MainHandler{
-		Logger:        logger,
-		LogsModel:     logsModel,
-		TrackingModel: trackingModel,
+		Logger:  logger,
+		Queries: queries,
 	}
 }
 
@@ -225,7 +223,7 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	pageCount := pdfReader.NumPage()
+	pageCount := int32(pdfReader.NumPage()) //#nosec G115
 
 	err = aws.UploadArticle(file, fileHeader.Filename, &fileHeader.Size)
 	if err != nil {
@@ -239,7 +237,13 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	err = handler.TrackingModel.InsertTracking(libraryId, transactionId, pageCount, false)
+	newTracking := data.InsertTrackingParams{
+		Libraryid:     libraryId,
+		Transactionid: transactionId,
+		Pagecount:     pageCount,
+	}
+
+	_, err = handler.Queries.InsertTracking(r.Context(), newTracking)
 	if err != nil {
 		responseMessage = util.ResponseMessage{
 			Status:   http.StatusInternalServerError,
@@ -410,7 +414,12 @@ func (handler *MainHandler) HandleReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	info, err := handler.TrackingModel.GetReportFromRange(libraryId, startTime, endTime)
+	newReport := data.GetReportFromRangeParams{
+		Libraryid:   libraryId,
+		Processed:   startTime,
+		Processed_2: endTime,
+	}
+	info, err := handler.Queries.GetReportFromRange(r.Context(), newReport)
 	if err != nil {
 		responseMessage = util.ResponseMessage{
 			Status:   http.StatusInternalServerError,
@@ -424,7 +433,7 @@ func (handler *MainHandler) HandleReport(w http.ResponseWriter, r *http.Request)
 
 	var result ReportResponse
 	for _, track := range info {
-		result.TotalPages += track.PageCount
+		result.TotalPages += int(track.Pagecount)
 	}
 	result.TotalCost = float64(result.TotalPages) * PricePerPage
 	result.Data = info

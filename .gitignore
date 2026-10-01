@@ -1,5 +1,6 @@
 /iris
 .env
 
-data/test_pdfs/*
-!data/test_pdfs/README.md
+/data/db.go
+/data/models.go
+/data/query.sql.go

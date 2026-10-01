@@ -1,8 +1,8 @@
 CREATE TABLE IF NOT EXISTS tracking (
     id SERIAL PRIMARY KEY,
-    libraryid text,
-    transactionid text,
-    pagecount int,
-    paid boolean,
-    processed timestamp
+    libraryid text NOT NULL,
+    transactionid text NOT NULL,
+    pagecount int NOT NULL,
+    paid boolean NOT NULL,
+    processed timestamp NOT NULL
 );
