@@ -15,13 +15,13 @@ import (
 )
 
 type TestHandler struct {
-	Logger    *slog.Logger
+	Logger  *slog.Logger
 	Queries *data.Queries
 }
 
 func CreateTestHandler(logger *slog.Logger, queries *data.Queries) *TestHandler {
 	return &TestHandler{
-		Logger:    logger,
+		Logger:  logger,
 		Queries: queries,
 	}
 }

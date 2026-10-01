@@ -39,14 +39,14 @@ type ReportResponse struct {
 }
 
 type MainHandler struct {
-	Logger        *slog.Logger
-    Queries *data.Queries
+	Logger  *slog.Logger
+	Queries *data.Queries
 }
 
 func CreateMainHandler(logger *slog.Logger, queries *data.Queries) *MainHandler {
 	return &MainHandler{
-		Logger:        logger,
-        Queries: queries,
+		Logger:  logger,
+		Queries: queries,
 	}
 }
 
@@ -223,8 +223,7 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-    var pageCount int32
-	pageCount = int32(pdfReader.NumPage())
+	pageCount := int32(pdfReader.NumPage()) //#nosec G115
 
 	err = aws.UploadArticle(file, fileHeader.Filename, &fileHeader.Size)
 	if err != nil {
@@ -238,11 +237,11 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-    newTracking := data.InsertTrackingParams {
-        Libraryid: libraryId,
-        Transactionid: transactionId,
-        Pagecount: pageCount,
-    }
+	newTracking := data.InsertTrackingParams{
+		Libraryid:     libraryId,
+		Transactionid: transactionId,
+		Pagecount:     pageCount,
+	}
 
 	_, err = handler.Queries.InsertTracking(r.Context(), newTracking)
 	if err != nil {
@@ -415,11 +414,11 @@ func (handler *MainHandler) HandleReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-    newReport := data.GetReportFromRangeParams {
-        Libraryid: libraryId,
-        Processed: startTime,
-        Processed_2: endTime,
-    }
+	newReport := data.GetReportFromRangeParams{
+		Libraryid:   libraryId,
+		Processed:   startTime,
+		Processed_2: endTime,
+	}
 	info, err := handler.Queries.GetReportFromRange(r.Context(), newReport)
 	if err != nil {
 		responseMessage = util.ResponseMessage{

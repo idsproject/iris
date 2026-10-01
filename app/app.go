@@ -5,26 +5,26 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"sync"
-    "errors"
 
-    "github.com/idsproject/iris/data"
+	"github.com/idsproject/iris/data"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Application holds the shared dependencies of the running service:
 // the logger, the data-access models, and a wait group for
 // tracking background tasks during shutdown.
 type Application struct {
-	Logger *slog.Logger
+	Logger  *slog.Logger
 	Queries *data.Queries
-	Wg     sync.WaitGroup
+	Wg      sync.WaitGroup
 }
 
 // Run starts the service: it opens the database pool,
@@ -40,10 +40,10 @@ func Run(ctx context.Context) error {
 	}
 	defer dbpool.Close()
 
-    queries := data.New(dbpool)
+	queries := data.New(dbpool)
 
 	app := &Application{
-		Logger: logger,
+		Logger:  logger,
 		Queries: queries,
 	}
 
@@ -58,24 +58,23 @@ func Run(ctx context.Context) error {
 
 func RunMigrations() error {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-    migrationDir := os.Getenv("MIGRATIONS_DIR")
-    connectionStr := os.Getenv("DB_URL")
+	migrationDir := os.Getenv("MIGRATIONS_DIR")
+	connectionStr := os.Getenv("DB_URL")
 
-    logger.Info("What", "DB_URL", connectionStr)
+	logger.Info("What", "DB_URL", connectionStr)
 
-    var from, to uint
-	var dirty bool
+	var from, to uint
 
 	migration, err := migrate.New(migrationDir, connectionStr)
 	if err != nil {
 		logger.Error("failed to create migration", "err", err)
-        return err
+		return err
 	}
 
-	from, dirty, err = migration.Version()
+	from, _, err = migration.Version()
 	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
 		logger.Error("failed to get from version", "err", err)
-        return err
+		return err
 	}
 
 	err = migration.Up()
@@ -83,13 +82,13 @@ func RunMigrations() error {
 		logger.Error("failed to run migrations", "err", err)
 	}
 
-	to, dirty, err = migration.Version()
+	to, _, err = migration.Version()
 	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
 		logger.Error("failed to get to version", "err", err)
-        return err
+		return err
 	}
 
-	logger.Info("Migrations success", "fromVersion", from, "toVersion", to, "dirty", dirty)
+	logger.Info("Migrations success", "fromVersion", from, "toVersion", to)
 
 	return nil
 }

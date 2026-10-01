@@ -1,7 +1,9 @@
 GO ?= go
-LINTER ?= golangci-lint
+GOFMT ?= gofmt "-s"
 SQLC ?= $(GO) tool sqlc
 BINARY=iris
+MAIN_PACKAGE=cmd/iris
+GOFILES := $(shell find . -name "*.go")
 SQL_GEN_IN := sqlc.yaml query.sql $(wildcard migrations/*.sql) go.mod go.sum
 SQL_GEN_OUT := data/db.go data/models.go data/query.sql.go
 
@@ -16,7 +18,7 @@ DEPLOY_SCRIPT := $(MAKEFILE_DIR)bin/deploy-remote.sh
 
 .PHONY: all generate generate-sqlc format build test lint lint-fix deploy local tools-update clean
 
-all: build test format lint
+all: clean build test format lint
 
 generate: $(SQL_GEN_OUT)
 
@@ -26,19 +28,21 @@ $(SQL_GEN_OUT) &: $(SQL_GEN_IN)
 	$(SQLC) generate
 
 format:
-	$(GO) fmt ./...
+	$(GOFMT) -w $(GOFILES)
 
-build:
-	$(GO) build -o iris ./cmd/iris
+$(BINARY): $(SQL_GEN_OUT) $(GOFILES)
+	$(GO) build -v -o $(BINARY) ./$(MAIN_PACKAGE)
 
-test:
+build: $(BINARY)
+
+test: generate
 	$(GO) test ./...
 
-lint:
-	$(LINTER) run
+lint: generate
+	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run
 
-lint-fix:
-	$(LINTER) run --fix
+lint-fix: generate
+	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run --fix
 
 deploy:
 	@test -n "$(IMAGE)"   || { echo "IMAGE is required";   exit 1; }
