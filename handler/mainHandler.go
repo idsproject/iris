@@ -1,21 +1,22 @@
 package handler
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
+	"github.com/idsproject/iris/api"
 	"github.com/idsproject/iris/aws"
 	"github.com/idsproject/iris/util"
 
 	"github.com/idsproject/iris/data"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/ledongthuc/pdf"
 )
 
@@ -24,202 +25,217 @@ const fileSizeThreshold = 50  // in MB
 
 const PricePerPage = 0.15
 
-type Notify struct {
-	Data    any    `json:"payload,omitempty"`
-	Sender  string `json:"sender"`
-	Status  string `json:"status"`
-	File    string `json:"file"`
-	Message string `json:"message"`
-}
+// errRawOperation is returned by the strict stubs for operations that
+// [server] routes to raw net/http handlers instead.
+var errRawOperation = errors.New("operation is served by a raw handler")
 
-type ReportResponse struct {
-	Data       []data.Tracking `json:"data"`
-	TotalPages int             `json:"total_pages"`
-	TotalCost  float64         `json:"total_cost"`
-}
-
+// MainHandler implements the operations in openapi/open-api.yaml.
+//
+// Most operations satisfy [api.StrictServerInterface]: they take a typed
+// request and return one of the responses the spec allows for them.
+// UploadArticle and DownloadArticle need the raw *http.Request, for
+// ParseMultipartForm and for http.ServeFileFS's Range and conditional
+// handling, so [server] sends them to uploadArticle and downloadArticle.
 type MainHandler struct {
 	Logger  *slog.Logger
 	Queries *data.Queries
 }
 
-func CreateMainHandler(logger *slog.Logger, queries *data.Queries) *MainHandler {
-	return &MainHandler{
+// CreateServer returns the handlers for [api.HandlerWithOptions].
+func CreateServer(logger *slog.Logger, queries *data.Queries) api.ServerInterface {
+	handler := &MainHandler{
 		Logger:  logger,
 		Queries: queries,
 	}
+
+	strict := api.NewStrictHandlerWithOptions(handler, []api.StrictMiddlewareFunc{noStore}, api.StrictHTTPServerOptions{
+		RequestErrorHandlerFunc:  handler.requestError,
+		ResponseErrorHandlerFunc: handler.responseError,
+	})
+
+	return &server{ServerInterface: strict, handler: handler}
 }
 
-func (handler *MainHandler) Routes(router chi.Router) {
-	router.Get("/healthz", handler.HandleHealthz)
-	router.Post("/upload", handler.HandleUpload)
-	router.Get("/status/{filename}", handler.HandleStatus)
-	router.Get("/download/{filename}", handler.HandleDownload)
-	router.Post("/notify", handler.HandleNotify)
-	router.Get("/report", handler.HandleReport)
+// server serves every operation through the strict wrapper except the two
+// that need the raw request, which it overrides.
+type server struct {
+	api.ServerInterface
+	handler *MainHandler
 }
 
-func (handler *MainHandler) HandleHealthz(w http.ResponseWriter, r *http.Request) {
-	_, err := w.Write([]byte("OK"))
+func (s *server) UploadArticle(w http.ResponseWriter, r *http.Request, params api.UploadArticleParams) {
+	s.handler.uploadArticle(w, r, params)
+}
+
+func (s *server) DownloadArticle(w http.ResponseWriter, r *http.Request, filename api.FilenamePath) {
+	s.handler.downloadArticle(w, r, filename)
+}
+
+func (handler *MainHandler) GetHealthz(_ context.Context, _ api.GetHealthzRequestObject) (api.GetHealthzResponseObject, error) {
+	return api.GetHealthz200TextResponse("OK"), nil
+}
+
+func (handler *MainHandler) GetV1Healthz(_ context.Context, _ api.GetV1HealthzRequestObject) (api.GetV1HealthzResponseObject, error) {
+	return api.GetV1Healthz200TextResponse("OK"), nil
+}
+
+func (handler *MainHandler) GetRobotsTxt(_ context.Context, _ api.GetRobotsTxtRequestObject) (api.GetRobotsTxtResponseObject, error) {
+	robots, err := os.ReadFile("./robots.txt")
 	if err != nil {
-		handler.Logger.Error("HandleHealthz/http/Write", "err", err)
+		return nil, fmt.Errorf("GetRobotsTxt/os/ReadFile: %w", err)
 	}
+
+	return api.GetRobotsTxt200TextResponse(robots), nil
 }
 
-func (handler *MainHandler) HandleNotify(w http.ResponseWriter, r *http.Request) {
-	responseData := util.ResponseData{
-		Writer:  w,
-		Request: r,
-		Logger:  handler.Logger,
-	}
-	var responseMessage util.ResponseMessage
-	var message Notify
+func (handler *MainHandler) Notify(_ context.Context, request api.NotifyRequestObject) (api.NotifyResponseObject, error) {
+	message := *request.Body
 
-	err := json.NewDecoder(r.Body).Decode(&message)
-	if err != nil {
-		responseMessage = util.ResponseMessage{
-			Status:   http.StatusBadRequest,
-			Message:  "Could not parse data",
-			Error:    err,
-			CallPath: "HandleNotify/json/Decode",
-		}
-		util.EndpointError(responseData, responseMessage)
-		return
-	}
-
-	baseDir := os.Getenv("DOWNLOAD_DIR")
-
-	safePath := filepath.Join(baseDir, message.File)
-
-	if !strings.HasPrefix(safePath, baseDir) {
-		handler.Logger.Warn("HandleNotify received unclean filename", "filename", message.File)
-		err = util.Error(w, r, http.StatusBadRequest, "Invalid file name")
-		if err != nil {
-			handler.Logger.Error("HandleNotify/util/Error", "err", err)
-		}
-		return
+	safePath, ok := safeDownloadPath(message.File)
+	if !ok {
+		handler.Logger.Warn("Notify received unclean filename", "filename", message.File)
+		return api.Notify400JSONResponse{ErrorJSONResponse: errorBody("Invalid file name")}, nil
 	}
 
 	switch message.Message {
-	case "remediation complete":
+	case api.RemediationComplete:
 		// here is where we will call CrossLink
 		handler.Logger.Info("Received remediation complete", "payload", message)
-		err = aws.DownloadArticle(message.File)
+		err := aws.DownloadArticle(message.File)
 		if err != nil {
-			responseMessage = util.ResponseMessage{
-				Status:   http.StatusInternalServerError,
-				Message:  "Error downloading to AWS",
-				Error:    err,
-				CallPath: "HandleNotify/aws/DownloadArticle",
-			}
-			util.EndpointError(responseData, responseMessage)
-			return
+			handler.Logger.Error("Notify/aws/DownloadArticle", "err", err)
+			return api.Notify500JSONResponse(errorBody("Error downloading to AWS")), nil
 		}
-	case "download complete":
-		err = os.Remove(safePath) // #nosec G703
+	case api.DownloadComplete:
+		err := os.Remove(safePath) // #nosec G703
 		if err != nil {
-			handler.Logger.Error("HandleNotify/os/Remove", "err", err)
-			err = util.Error(w, r, http.StatusInternalServerError, "Unable to clean up files")
-			if err != nil {
-				handler.Logger.Error("HandleNotify/util/Error", "err", err)
-			}
-			return
+			handler.Logger.Error("Notify/os/Remove", "err", err)
+			return api.Notify500JSONResponse(errorBody("Unable to clean up files")), nil
 		}
-	case "remediation error":
+	case api.RemediationError:
 		handler.Logger.Info("remedation error received", "payload", message)
-		file, createErr := os.Create(safePath + ".error") // #nosec G304 G703
-		if createErr != nil {
-			handler.Logger.Error("HandleNotify/os/Create", "err", createErr)
-			err = util.Error(w, r, http.StatusInternalServerError, "Unable to create error file")
-			if err != nil {
-				handler.Logger.Error("HandleNotify/util/Error", "err", err)
-			}
-			return
+		file, err := os.Create(safePath + ".error") // #nosec G304 G703
+		if err != nil {
+			handler.Logger.Error("Notify/os/Create", "err", err)
+			return api.Notify500JSONResponse(errorBody("Unable to create error file")), nil
 		}
-		closeErr := file.Close()
-		if closeErr != nil {
-			handler.Logger.Error("HandleNotify/os/Close", "err", closeErr)
-			err = util.Error(w, r, http.StatusInternalServerError, "Unable to create error file")
-			if err != nil {
-				handler.Logger.Error("HandleNotify/util/Error", "err", err)
-			}
-			return
+		err = file.Close()
+		if err != nil {
+			handler.Logger.Error("Notify/os/Close", "err", err)
+			return api.Notify500JSONResponse(errorBody("Unable to create error file")), nil
 		}
 	default:
-		err = util.Error(w, r, http.StatusBadRequest, "Unknown message")
-		if err != nil {
-			handler.Logger.Error("HandleNotify/util/Error", "err", err)
-		}
-		return
+		return api.Notify400JSONResponse{ErrorJSONResponse: errorBody("Unknown message")}, nil
 	}
 
-	err = util.Success(w, r, "notified")
-	if err != nil {
-		handler.Logger.Error("HandleNotify/util/Success", "err", err)
+	return api.Notify200JSONResponse{SuccessJSONResponse: successBody("notified")}, nil
+}
+
+func (handler *MainHandler) GetArticleStatus(_ context.Context, request api.GetArticleStatusRequestObject) (api.GetArticleStatusResponseObject, error) {
+	safePath, ok := safeDownloadPath(request.Filename)
+	if !ok {
+		handler.Logger.Warn("GetArticleStatus received unclean filename", "filename", request.Filename)
+		return api.GetArticleStatus400JSONResponse{ErrorJSONResponse: errorBody("Invalid file name")}, nil
+	}
+
+	_, err := os.Stat(safePath) // #nosec G703
+	if err == nil {
+		return api.GetArticleStatus200JSONResponse{
+			Status:  api.ResponseStatusSuccess,
+			Message: "file found",
+			Done:    true,
+		}, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		handler.Logger.Error("GetArticleStatus/os/Stat", "err", err)
+		return api.GetArticleStatus500JSONResponse(errorBody("error checking file")), nil
+	}
+
+	_, err = os.Stat(safePath + ".error") // #nosec G703
+	switch {
+	case err == nil:
+		return api.GetArticleStatus200JSONResponse{
+			Status:           api.ResponseStatusSuccess,
+			Message:          "error during remediation",
+			Done:             false,
+			RemediationError: new(true),
+		}, nil
+	case errors.Is(err, os.ErrNotExist):
+		return api.GetArticleStatus200JSONResponse{
+			Status:  api.ResponseStatusSuccess,
+			Message: "file not found",
+			Done:    false,
+		}, nil
+	default:
+		handler.Logger.Error("GetArticleStatus/os/Stat", "err", err)
+		return api.GetArticleStatus500JSONResponse(errorBody("error checking error file")), nil
 	}
 }
 
-func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
-	responseData := util.ResponseData{
-		Writer:  w,
-		Request: r,
-		Logger:  handler.Logger,
+func (handler *MainHandler) GetReport(ctx context.Context, request api.GetReportRequestObject) (api.GetReportResponseObject, error) {
+	rows, err := handler.Queries.GetReportFromRange(ctx, data.GetReportFromRangeParams{
+		Libraryid:   request.Params.XLibraryId,
+		Processed:   request.Params.Start.Time,
+		Processed_2: request.Params.End.Time,
+	})
+	if err != nil {
+		handler.Logger.Error("GetReport/data/GetReportFromRange", "err", err)
+		return api.GetReport500JSONResponse(errorBody("error getting report data")), nil
 	}
-	var responseMessage util.ResponseMessage
+
+	report := api.Report{Data: make([]api.Tracking, 0, len(rows))}
+	for _, row := range rows {
+		report.TotalPages += int(row.Pagecount)
+		report.Data = append(report.Data, api.Tracking{
+			Processed:     row.Processed,
+			LibraryId:     row.Libraryid,
+			TransactionId: row.Transactionid,
+			PageCount:     int(row.Pagecount),
+			Paid:          row.Paid,
+		})
+	}
+	report.TotalCost = float64(report.TotalPages) * PricePerPage
+
+	return api.GetReport200JSONResponse{
+		Status:  api.ResponseStatusSuccess,
+		Message: "report generated",
+		Result:  report,
+	}, nil
+}
+
+// UploadArticle is served by uploadArticle; see [server].
+func (handler *MainHandler) UploadArticle(_ context.Context, _ api.UploadArticleRequestObject) (api.UploadArticleResponseObject, error) {
+	return nil, errRawOperation
+}
+
+// DownloadArticle is served by downloadArticle; see [server].
+func (handler *MainHandler) DownloadArticle(_ context.Context, _ api.DownloadArticleRequestObject) (api.DownloadArticleResponseObject, error) {
+	return nil, errRawOperation
+}
+
+func (handler *MainHandler) uploadArticle(w http.ResponseWriter, r *http.Request, params api.UploadArticleParams) {
+	w.Header().Set("Cache-Control", "no-store")
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadFileSize<<20)
 	err := r.ParseMultipartForm(fileSizeThreshold << 20) // #nosec G120
 	if err != nil {
-		responseMessage = util.ResponseMessage{
-			Status:   http.StatusBadRequest,
-			Message:  "Could not parse data",
-			Error:    err,
-			CallPath: "HandleUpload/http/ParseMultipartForm",
-		}
-		util.EndpointError(responseData, responseMessage)
+		handler.Logger.Error("UploadArticle/http/ParseMultipartForm", "err", err)
+		handler.writeUpload(w, api.UploadArticle400JSONResponse{ErrorJSONResponse: errorBody("Could not parse data")})
 		return
 	}
 
 	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
-		responseMessage = util.ResponseMessage{
-			Status:   http.StatusBadRequest,
-			Message:  "Could not parse file",
-			Error:    err,
-			CallPath: "HandleUpload/http/FileForm",
-		}
-		util.EndpointError(responseData, responseMessage)
+		handler.Logger.Error("UploadArticle/http/FormFile", "err", err)
+		handler.writeUpload(w, api.UploadArticle400JSONResponse{ErrorJSONResponse: errorBody("Could not parse file")})
 		return
 	}
 	defer file.Close() //nolint:errcheck
 
-	transactionId := r.URL.Query().Get("transaction")
-	if transactionId == "" {
-		err = util.Error(w, r, http.StatusBadRequest, "need transaction in url query")
-		if err != nil {
-			handler.Logger.Error("HandleUpload/util/Error", "err", err)
-		}
-		return
-	}
-
-	libraryId := r.Header.Get("X-Library-Id")
-	if libraryId == "" {
-		err = util.Error(w, r, http.StatusBadRequest, "need libraryid in header")
-		if err != nil {
-			handler.Logger.Error("HandleUpload/util/Error", "err", err)
-		}
-		return
-	}
-
 	pdfReader, err := pdf.NewReader(file, fileHeader.Size)
 	if err != nil {
-		responseMessage = util.ResponseMessage{
-			Status:   http.StatusInternalServerError,
-			Message:  "Error opening as pdf",
-			Error:    err,
-			CallPath: "HandleUpload/pdf/NewReader",
-		}
-		util.EndpointError(responseData, responseMessage)
+		handler.Logger.Error("UploadArticle/pdf/NewReader", "err", err)
+		handler.writeUpload(w, api.UploadArticle500JSONResponse(errorBody("Error opening as pdf")))
 		return
 	}
 
@@ -227,223 +243,111 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 
 	err = aws.UploadArticle(file, fileHeader.Filename, &fileHeader.Size)
 	if err != nil {
-		responseMessage = util.ResponseMessage{
-			Status:   http.StatusInternalServerError,
-			Message:  "Error uploading to AWS",
-			Error:    err,
-			CallPath: "HandleUpload/aws/UploadArticle",
-		}
-		util.EndpointError(responseData, responseMessage)
+		handler.Logger.Error("UploadArticle/aws/UploadArticle", "err", err)
+		handler.writeUpload(w, api.UploadArticle500JSONResponse(errorBody("Error uploading to AWS")))
 		return
 	}
 
-	newTracking := data.InsertTrackingParams{
-		Libraryid:     libraryId,
-		Transactionid: transactionId,
+	_, err = handler.Queries.InsertTracking(r.Context(), data.InsertTrackingParams{
+		Libraryid:     params.XLibraryId,
+		Transactionid: params.Transaction,
 		Pagecount:     pageCount,
-	}
-
-	_, err = handler.Queries.InsertTracking(r.Context(), newTracking)
+	})
 	if err != nil {
-		responseMessage = util.ResponseMessage{
-			Status:   http.StatusInternalServerError,
-			Message:  "Error updating tracking",
-			Error:    err,
-			CallPath: "HandleUpload/data/InsertTracking",
-		}
-		util.EndpointError(responseData, responseMessage)
+		handler.Logger.Error("UploadArticle/data/InsertTracking", "err", err)
+		handler.writeUpload(w, api.UploadArticle500JSONResponse(errorBody("Error updating tracking")))
 		return
 	}
 
-	err = util.Success(w, r, "uploaded")
+	handler.writeUpload(w, api.UploadArticle200JSONResponse{SuccessJSONResponse: successBody("uploaded")})
+}
+
+func (handler *MainHandler) writeUpload(w http.ResponseWriter, response api.UploadArticleResponseObject) {
+	err := response.VisitUploadArticleResponse(w)
 	if err != nil {
-		handler.Logger.Error("HandleUpload/util/Success", "err", err)
+		handler.Logger.Error("UploadArticle/api/VisitUploadArticleResponse", "err", err)
 	}
 }
 
-func (handler *MainHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
-	fileName := chi.URLParam(r, "filename")
-	baseDir := os.Getenv("DOWNLOAD_DIR")
-	safePath := filepath.Join(baseDir, fileName)
-	if !strings.HasPrefix(safePath, baseDir) {
-		handler.Logger.Warn("HandleNotify received unclean filename", "filename", fileName)
-		err := util.Error(w, r, http.StatusBadRequest, "Invalid file name")
-		if err != nil {
-			handler.Logger.Error("HandleNotify/util/Error", "err", err)
-		}
-		return
-	}
-
-	response := util.CreateResponse()
-	if _, statErr := os.Stat(safePath); statErr == nil { // #nosec G703
-		response.Add("status", "success")
-		response.Add("message", "file found")
-		response.Add("done", true)
-
-		err := response.WriteResponse(w, r, http.StatusOK)
-		if err != nil {
-			handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
-		}
-
-		return
-	} else if errors.Is(statErr, os.ErrNotExist) {
-		if _, newStatErr := os.Stat(safePath + ".error"); newStatErr == nil { // #nosec G703
-			response.Add("status", "success")
-			response.Add("message", "error during remediation")
-			response.Add("done", false)
-			response.Add("remediation_error", true)
-
-			err := response.WriteResponse(w, r, http.StatusOK)
-			if err != nil {
-				handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
-			}
-			return
-		} else if errors.Is(newStatErr, os.ErrNotExist) {
-			response.Add("status", "success")
-			response.Add("message", "file not found")
-			response.Add("done", false)
-
-			err := response.WriteResponse(w, r, http.StatusOK)
-			if err != nil {
-				handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
-			}
-
-			return
-		} else {
-			handler.Logger.Error("HandleStatus/os/Stat", "err", statErr)
-			response.Add("status", "error")
-			response.Add("message", "error checking error file")
-			response.Add("done", false)
-		}
-	} else {
-		handler.Logger.Error("HandleStatus/os/Stat", "err", statErr)
-		response.Add("status", "error")
-		response.Add("message", "error checking file")
-		response.Add("done", false)
-
-		err := response.WriteResponse(w, r, http.StatusInternalServerError)
-		if err != nil {
-			handler.Logger.Error("HandleStatus/util/WriteResponse", "err", err)
-		}
-	}
-}
-
-func (handler *MainHandler) HandleDownload(w http.ResponseWriter, r *http.Request) {
-	responseData := util.ResponseData{
-		Writer:  w,
-		Request: r,
-		Logger:  handler.Logger,
-	}
-	var responseMessage util.ResponseMessage
-
-	fileName := chi.URLParam(r, "filename")
-
-	err := aws.DownloadArticle(fileName)
+func (handler *MainHandler) downloadArticle(w http.ResponseWriter, r *http.Request, filename api.FilenamePath) {
+	err := aws.DownloadArticle(filename)
 	if err != nil {
-		responseMessage = util.ResponseMessage{
-			Status:   http.StatusInternalServerError,
-			Message:  "Error downloading to AWS",
-			Error:    err,
-			CallPath: "HandleUpload/aws/DownloadArticle",
-		}
-		util.EndpointError(responseData, responseMessage)
+		handler.Logger.Error("DownloadArticle/aws/DownloadArticle", "err", err)
+		handler.writeDownloadError(w, api.DownloadArticle500JSONResponse(errorBody("Error downloading to AWS")))
 		return
 	}
 
 	dirFS := os.DirFS(os.Getenv("DOWNLOAD_DIR"))
 
-	http.ServeFileFS(w, r, dirFS, fileName) // #nosec G703
+	// ServeFileFS answers a missing file with a plain-text 404, so check first
+	// to return the JSON envelope instead. An invalid name or a directory is
+	// treated as missing too, since neither is a file that can be downloaded.
+	info, err := fs.Stat(dirFS, filename)
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrInvalid) || (err == nil && info.IsDir()) {
+		handler.writeDownloadError(w, api.DownloadArticle404JSONResponse{ErrorJSONResponse: errorBody("file not found")})
+		return
+	}
+	if err != nil {
+		handler.Logger.Error("DownloadArticle/fs/Stat", "err", err)
+		handler.writeDownloadError(w, api.DownloadArticle500JSONResponse(errorBody("Error checking file")))
+		return
+	}
+
+	http.ServeFileFS(w, r, dirFS, filename) // #nosec G703
 }
 
-func (handler *MainHandler) HandleReport(w http.ResponseWriter, r *http.Request) {
-	responseData := util.ResponseData{
-		Writer:  w,
-		Request: r,
-		Logger:  handler.Logger,
-	}
-	var responseMessage util.ResponseMessage
-
-	libraryId := r.Header.Get("X-Library-Id")
-	if libraryId == "" {
-		err := util.Error(w, r, http.StatusBadRequest, "need libraryid in header")
-		if err != nil {
-			handler.Logger.Error("HandleUpload/util/Error", "err", err)
-		}
-		return
-	}
-
-	startTimeStr := r.URL.Query().Get("start")
-	if startTimeStr == "" {
-		err := util.Error(w, r, http.StatusBadRequest, "need start in url query")
-		if err != nil {
-			handler.Logger.Error("HandleReport/util/Error", "err", err)
-		}
-		return
-	}
-
-	endTimeStr := r.URL.Query().Get("end")
-	if endTimeStr == "" {
-		err := util.Error(w, r, http.StatusBadRequest, "need end in url query")
-		if err != nil {
-			handler.Logger.Error("HandleReport/util/Error", "err", err)
-		}
-		return
-	}
-
-	startTime, err := time.Parse(time.DateOnly, startTimeStr)
+func (handler *MainHandler) writeDownloadError(w http.ResponseWriter, response api.DownloadArticleResponseObject) {
+	w.Header().Set("Cache-Control", "no-store")
+	err := response.VisitDownloadArticleResponse(w)
 	if err != nil {
-		responseMessage = util.ResponseMessage{
-			Status:   http.StatusBadRequest,
-			Message:  "need start in YYYY-MM-DD format",
-			Error:    err,
-			CallPath: "HandleReport/time/Parse",
-		}
-		util.EndpointError(responseData, responseMessage)
-		return
+		handler.Logger.Error("DownloadArticle/api/VisitDownloadArticleResponse", "err", err)
 	}
+}
 
-	endTime, err := time.Parse(time.DateOnly, endTimeStr)
-	if err != nil {
-		responseMessage = util.ResponseMessage{
-			Status:   http.StatusBadRequest,
-			Message:  "need end in YYYY-MM-DD format",
-			Error:    err,
-			CallPath: "HandleReport/time/Parse",
-		}
-		util.EndpointError(responseData, responseMessage)
-		return
+// requestError reports a request the strict wrapper couldn't decode, such as
+// a malformed JSON body.
+func (handler *MainHandler) requestError(w http.ResponseWriter, r *http.Request, err error) {
+	handler.Logger.Warn("strict request error", "path", r.URL.Path, "err", err)
+	writeErr := util.Error(w, r, http.StatusBadRequest, err.Error())
+	if writeErr != nil {
+		handler.Logger.Error("requestError/util/Error", "err", writeErr)
 	}
+}
 
-	newReport := data.GetReportFromRangeParams{
-		Libraryid:   libraryId,
-		Processed:   startTime,
-		Processed_2: endTime,
+// responseError reports a strict handler that returned an error instead of a
+// response, or a response that failed to write.
+func (handler *MainHandler) responseError(w http.ResponseWriter, r *http.Request, err error) {
+	handler.Logger.Error("strict response error", "path", r.URL.Path, "err", err)
+	writeErr := util.Error(w, r, http.StatusInternalServerError, "Internal server error")
+	if writeErr != nil {
+		handler.Logger.Error("responseError/util/Error", "err", writeErr)
 	}
-	info, err := handler.Queries.GetReportFromRange(r.Context(), newReport)
-	if err != nil {
-		responseMessage = util.ResponseMessage{
-			Status:   http.StatusInternalServerError,
-			Message:  "error getting report data",
-			Error:    err,
-			CallPath: "HandleReport/data/GetReportFromRange",
-		}
-		util.EndpointError(responseData, responseMessage)
-		return
-	}
+}
 
-	var result ReportResponse
-	for _, track := range info {
-		result.TotalPages += int(track.Pagecount)
+// noStore keeps gateways and clients from caching API responses, most
+// importantly the status polled while a file is remediated.
+func noStore(f api.StrictHandlerFunc, _ string) api.StrictHandlerFunc {
+	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
+		w.Header().Set("Cache-Control", "no-store")
+		return f(ctx, w, r, request)
 	}
-	result.TotalCost = float64(result.TotalPages) * PricePerPage
-	result.Data = info
+}
 
-	response := util.CreateResponse()
-	response.Add("status", "success")
-	response.Add("result", result)
+// safeDownloadPath joins name onto $DOWNLOAD_DIR, reporting false if the
+// result would land outside it.
+func safeDownloadPath(name string) (string, bool) {
+	baseDir := os.Getenv("DOWNLOAD_DIR")
+	safePath := filepath.Join(baseDir, name)
+	return safePath, strings.HasPrefix(safePath, baseDir)
+}
 
-	err = response.WriteResponse(w, r, http.StatusOK)
-	if err != nil {
-		handler.Logger.Error("HandleReport/util/WriteResponse", "err", err)
-	}
+// errorBody builds the envelope shared by every JSON error response. The
+// generated 4xx types embed api.ErrorJSONResponse while the 5xx types are
+// defined on api.BaseResponse, so callers wrap or convert it accordingly.
+func errorBody(message string) api.ErrorJSONResponse {
+	return api.ErrorJSONResponse{Status: api.ResponseStatusError, Message: message}
+}
+
+func successBody(message string) api.SuccessJSONResponse {
+	return api.SuccessJSONResponse{Status: api.ResponseStatusSuccess, Message: message}
 }

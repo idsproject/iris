@@ -14,9 +14,14 @@ import (
 // SIGTERM, then shuts down gracefully, waiting for in-flight background tasks
 // to finish before returning.
 func (app *Application) serve() error {
+	router, routesErr := app.routes()
+	if routesErr != nil {
+		return routesErr
+	}
+
 	srv := &http.Server{
 		Addr:         ":" + os.Getenv("SERVERPORT"),
-		Handler:      app.routes(),
+		Handler:      router,
 		IdleTimeout:  time.Minute,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,

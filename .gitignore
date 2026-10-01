@@ -4,3 +4,5 @@
 /data/db.go
 /data/models.go
 /data/query.sql.go
+
+/api/api.gen.go
