@@ -10,6 +10,8 @@ import (
 	"sync"
     "errors"
 
+    "github.com/idsproject/iris/data"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -56,6 +58,10 @@ func Run(ctx context.Context) error {
 
 func RunMigrations() error {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+    migrationDir := os.Getenv("MIGRATIONS_DIR")
+    connectionStr := os.Getenv("DB_URL")
+
+    logger.Info("What", "DB_URL", connectionStr)
 
     var from, to uint
 	var dirty bool
@@ -79,7 +85,7 @@ func RunMigrations() error {
 
 	to, dirty, err = migration.Version()
 	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
-		logger.Errorf("failed to get to version", "err", err)
+		logger.Error("failed to get to version", "err", err)
         return err
 	}
 

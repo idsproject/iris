@@ -223,7 +223,8 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	pageCount := pdfReader.NumPage()
+    var pageCount int32
+	pageCount = int32(pdfReader.NumPage())
 
 	err = aws.UploadArticle(file, fileHeader.Filename, &fileHeader.Size)
 	if err != nil {
@@ -238,12 +239,12 @@ func (handler *MainHandler) HandleUpload(w http.ResponseWriter, r *http.Request)
 	}
 
     newTracking := data.InsertTrackingParams {
-        Libraryid = libraryId,
-        Transactionid = transactionId,
-        Pagecount = pageCount,
+        Libraryid: libraryId,
+        Transactionid: transactionId,
+        Pagecount: pageCount,
     }
 
-	_, err = handler.Queries.InsertTracking(r.Context, newTracking)
+	_, err = handler.Queries.InsertTracking(r.Context(), newTracking)
 	if err != nil {
 		responseMessage = util.ResponseMessage{
 			Status:   http.StatusInternalServerError,
@@ -414,7 +415,12 @@ func (handler *MainHandler) HandleReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	info, err := handler.Queries.GetReportFromRange(libraryId, startTime, endTime)
+    newReport := data.GetReportFromRangeParams {
+        Libraryid: libraryId,
+        Processed: startTime,
+        Processed_2: endTime,
+    }
+	info, err := handler.Queries.GetReportFromRange(r.Context(), newReport)
 	if err != nil {
 		responseMessage = util.ResponseMessage{
 			Status:   http.StatusInternalServerError,
@@ -428,7 +434,7 @@ func (handler *MainHandler) HandleReport(w http.ResponseWriter, r *http.Request)
 
 	var result ReportResponse
 	for _, track := range info {
-		result.TotalPages += track.PageCount
+		result.TotalPages += int(track.Pagecount)
 	}
 	result.TotalCost = float64(result.TotalPages) * PricePerPage
 	result.Data = info
