@@ -1,6 +1,7 @@
 /iris
 .env
 
+/data/pdfs/
 /data/db.go
 /data/models.go
 /data/query.sql.go
