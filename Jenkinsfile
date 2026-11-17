@@ -23,7 +23,8 @@ pipeline {
 
             environment {
                 DOCKER_CONFIG = "${WORKSPACE_TMP}/docker"
-                GOLANGCI_LINT_CACHE = "/var/cache/jenkins/golangci/${JOB_BASE_NAME}"
+                GOCACHE = "/tmp/.cache/go-build"
+                GOLANGCI_LINT_CACHE = "/tmp/.cache/golangci-lint"
             }
 
             stages {
