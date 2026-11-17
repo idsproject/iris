@@ -57,19 +57,7 @@ pipeline {
                 stage('Verify push') {
                     steps {
                         script {
-                            docker.withRegistry("https://${env.REGISTRY}", 'registry-creds') {
-                                // Remove EVERY local reference to the image, not just the
-                                // digest one. The tags share an image ID, so removing the
-                                // digest alone leaves the layers cached and makes the
-                                // pull below a no-op that would pass on an empty registry.
-                                sh """
-                                    docker image rm \
-                                        ${env.REGISTRY}/${env.PROJECT}:${env.GIT_SHA} \
-                                        ${env.REGISTRY}/${env.PROJECT}:cache \
-                                        ${env.IMAGE_REF} || true
-                                """
-                                sh "docker pull ${env.IMAGE_REF}"
-                            }
+                            sh "docker buildx imagetools inspect ${env.IMAGE_REF} --raw"
                             echo "verified ${env.IMAGE_REF}"
                         }
                     }
@@ -79,10 +67,6 @@ pipeline {
             post {
                 always {
                     sh 'docker logout "$REGISTRY" || true'
-                    // Verify push pulls the image back by digest, so both the
-                    // tag and the digest reference can be left on the agent.
-                    sh(script: 'docker image rm "$REGISTRY/$PROJECT:$GIT_SHA" "$IMAGE_REF" || true',
-                       returnStatus: true)
                     cleanWs()
                 }
             }
@@ -183,10 +167,12 @@ def buildAndPush(String registry, String project, String sha) {
         """
     }
 
-    // `|| true` matters: sh runs with -e, so a grep that matches nothing exits 1
-    // and fails the step with a bare exit code, making the error below dead code.
-    def digest = sh(script: "grep -o 'sha256:[0-9a-f]\\{64\\}' push.log | tail -1 || true",
-                    returnStdout: true).trim()
-    if (!digest) { error "could not determine pushed digest for ${tag}" }
+    // buildx writes the registry's own answer for what was pushed - no
+    // scraping push output and no assumption about line ordering.
+    def digest = sh(
+        script: """grep -o '"containerimage.digest": *"sha256:[0-9a-f]*"' build-meta.json | grep -o 'sha256:[0-9a-f]\\{64\\}' || true""",
+        returnStdout: true).trim()
+
+    if (!digest) { error "no containerimage.digest in build-meta.json for ${tag}" }
     return "${repo}@${digest}"
 }
