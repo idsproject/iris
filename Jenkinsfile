@@ -169,15 +169,17 @@ def buildAndPush(String registry, String project, String sha) {
         // No `| tee`. sh runs without pipefail, so a pipeline's exit status is
         // tee's, and a failed push would pass silently.
         sh """
-            DOCKER_BUILDKIT=1 docker build \
-                --build-arg BUILDKIT_INLINE_CACHE=1 \
-                --cache-from ${repo}:cache \
+            docker buildx build \
+                --platform linux/amd64 \
+                --provenance=false \
+                --sbom=false \
+                --cache-from type=registry,ref=${repo}:cache \
+                --cache-to type=registry,ref=${repo}:cache,mode=max \
+                --metadata-file build-meta.json \
                 -f Dockerfile \
-                -t ${tag} -t ${repo}:cache \
+                -t ${tag} \
+                --push \
                 .
-            docker push ${tag} > push.log
-            cat push.log
-            docker push ${repo}:cache
         """
     }
 
