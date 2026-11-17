@@ -1,41 +1,39 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 
+	"github.com/idsproject/iris/api"
 	"github.com/idsproject/iris/handler"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	"github.com/idsproject/iris/util"
 )
 
-func (app *Application) routes() http.Handler {
-	mainHandler := handler.CreateMainHandler(app.Logger, app.Queries)
-	testHandler := handler.CreateTestHandler(app.Logger, app.Queries)
+func (app *Application) routes() (http.Handler, error) {
+	spec, err := api.GetSpec()
+	if err != nil {
+		return nil, fmt.Errorf("routes/api/GetSpec: %w", err)
+	}
 
-	router := chi.NewRouter()
+	mux := http.NewServeMux()
 
-	router.Use(middleware.RequestID)
-	router.Use(middleware.ClientIPFromHeader("X-Real-IP"))
-	router.Use(middleware.Recoverer)
-	// router.Use(app.authenticate)
-
-	router.Get("/healthz", HandleHealthz)
-	router.Get("/robots.txt", ServeRobots)
-
-	router.Route("/v1", func(router chi.Router) {
-		// router.Use(app.requireAuthenticatedUser)
-		router.Group(mainHandler.Routes)
-		router.Route("/tests", testHandler.Routes)
+	api.HandlerWithOptions(handler.CreateServer(app.Logger, app.Queries), api.StdHTTPServerOptions{
+		BaseRouter:       mux,
+		Middlewares:      []api.MiddlewareFunc{app.validateRequests(spec)},
+		ErrorHandlerFunc: app.paramError,
 	})
 
-	return router
+	// app.authenticate and app.requireAuthenticatedUser would wrap mux here.
+
+	return app.recoverer(mux), nil
 }
 
-func HandleHealthz(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("OK")) //nolint:errcheck,gosec
-}
-
-func ServeRobots(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "./robots.txt")
+// paramError reports a path, query or header parameter that the generated
+// wrapper couldn't bind. It runs before validation and the handler.
+func (app *Application) paramError(w http.ResponseWriter, r *http.Request, err error) {
+	app.Logger.Warn("invalid request parameter", "method", r.Method, "path", r.URL.Path, "err", err)
+	writeErr := util.Error(w, r, http.StatusBadRequest, err.Error())
+	if writeErr != nil {
+		app.Logger.Error("paramError/util/Error", "err", writeErr)
+	}
 }
