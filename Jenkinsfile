@@ -57,7 +57,9 @@ pipeline {
                 stage('Verify push') {
                     steps {
                         script {
-                            sh "docker buildx imagetools inspect ${env.IMAGE_REF} --raw"
+                            docker.withRegistry("https://${registry}", 'registry-creds') {
+                                sh "docker buildx imagetools inspect ${env.IMAGE_REF} --raw"
+                            }
                             echo "verified ${env.IMAGE_REF}"
                         }
                     }
