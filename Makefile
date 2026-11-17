@@ -54,6 +54,16 @@ lint: generate
 lint-fix: generate
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run --fix
 
+tools-update:
+	$(GO) get -tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+	$(GO) get -tool github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+	$(GO) mod tidy
+
+clean:
+	rm -f $(BINARY) \
+		$(SQL_GEN_OUT) \
+		$(OAPI_GEN_OUT)
+
 deploy:
 	@test -n "$(IMAGE)"   || { echo "IMAGE is required";   exit 1; }
 	@test -n "$(HOST)"    || { echo "HOST is required";    exit 1; }
@@ -83,12 +93,3 @@ local:
 	docker run --rm --network local-iris-net --env-file .env --entrypoint /iris iris:local migrate
 	docker run -d --name local-iris-api --network local-iris-net --env-file .env -p "127.0.0.1:8080:8080" -v ./data/pdfs:/pdfs iris:local
 
-tools-update:
-	$(GO) get -tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
-	$(GO) get -tool github.com/sqlc-dev/sqlc/cmd/sqlc@latest
-	$(GO) mod tidy
-
-clean:
-	rm -f $(BINARY) \
-		$(SQL_GEN_OUT) \
-		$(OAPI_GEN_OUT)

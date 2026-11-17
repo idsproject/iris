@@ -174,9 +174,9 @@ func (handler *MainHandler) GetArticleStatus(_ context.Context, request api.GetA
 
 func (handler *MainHandler) GetReport(ctx context.Context, request api.GetReportRequestObject) (api.GetReportResponseObject, error) {
 	rows, err := handler.Queries.GetReportFromRange(ctx, data.GetReportFromRangeParams{
-		Libraryid:   request.Params.XLibraryId,
-		Processed:   request.Params.Start.Time,
-		Processed_2: request.Params.End.Time,
+		Libraryid: request.Params.XLibraryId,
+		StartTime: request.Params.Start.Time,
+		EndTime:   request.Params.End.Time,
 	})
 	if err != nil {
 		handler.Logger.Error("GetReport/data/GetReportFromRange", "err", err)

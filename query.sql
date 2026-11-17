@@ -6,8 +6,8 @@ RETURNING *;
 -- name: GetReportFromRange :many
 SELECT * FROM tracking
 WHERE libraryid = $1
-AND processed >= $2
-AND processed <= $3;
+AND processed >= sqlc.arg(start_time)
+AND processed <= sqlc.arg(end_time);
 
 -- name: InsertLog :one
 INSERT INTO logs (libraryid, transactionid, message)
