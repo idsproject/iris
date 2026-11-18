@@ -16,15 +16,16 @@ RUN --mount=type=cache,sharing=shared,target=/go/pkg/mod \
 
 RUN useradd -s /sbin/nologin -M -U iris-user
 
-FROM debian:trixie-slim
+FROM yeslogic/prince:17-debian-13-slim
 
 RUN apt-get -y update && apt-get -y install ca-certificates curl
+
+COPY license.dat /usr/lib/prince/license/license.dat
 
 COPY migrations/ /migrations
 ENV MIGRATIONS_DIR=file:///migrations
 
 COPY robots.txt /robots.txt
-# COPY openapi/open-api.json /openapi.json
 
 COPY --from=build /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=build /etc/passwd /etc/passwd

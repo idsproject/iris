@@ -1,5 +1,6 @@
 /iris
 .env
+license.dat
 
 /data/pdfs/
 /data/db.go
