@@ -160,11 +160,11 @@ def buildAndPush(String registry, String project, String sha) {
                 --provenance=false \
                 --sbom=false \
                 --cache-from type=registry,ref=${repo}:cache \
-                --cache-to type=registry,ref=${repo}:cache,mode=max \
+                --cache-to type=registry,ref=${repo}:cache,mode=max,oci-mediatypes=false \
                 --metadata-file build-meta.json \
                 -f Dockerfile \
                 -t ${tag} \
-                --push \
+                --output type=registry,oci-mediatypes=false \
                 .
         """
     }
