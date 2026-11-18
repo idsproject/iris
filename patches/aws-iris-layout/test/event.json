@@ -1,0 +1,10 @@
+{
+  "Records": [
+    {
+      "s3": {
+        "bucket": { "name": "REPLACE-WITH-PDF2HTML-BUCKET" },
+        "object": { "key": "remediated/final_REPLACE-WITH-NAME.zip" }
+      }
+    }
+  ]
+}
