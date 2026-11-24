@@ -65,21 +65,16 @@ func DownloadArticle(fileName string) error {
 // DownloadLayout copies an object the iris-layout Lambda wrote to the
 // pdf2html bucket (HTML_BUCKET_NAME) to destPath. The object is left in S3:
 // the Lambda checks for it to avoid rebuilding an article twice.
-func DownloadLayout(objectKey, destPath string) error {
+func DownloadLayout(objectKey, destPath string) ([]byte, error) {
 	bucketName := os.Getenv("HTML_BUCKET_NAME")
 	if bucketName == "" {
-		return ErrNoBucket
+		return nil, ErrNoBucket
 	}
 
 	awsConn, err := NewAwsS3Connection(context.Background())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	data, err := awsConn.downloadFile(bucketName, objectKey)
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(destPath, data, 0644) // #nosec G703
+	return awsConn.downloadFile(bucketName, objectKey)
 }

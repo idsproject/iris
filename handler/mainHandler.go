@@ -17,6 +17,7 @@ import (
 
 	"github.com/idsproject/iris/data"
 
+	"github.com/invopop/princepdf"
 	"github.com/ledongthuc/pdf"
 )
 
@@ -40,15 +41,17 @@ var errRawOperation = errors.New("operation is served by a raw handler")
 // ParseMultipartForm and for http.ServeFileFS's Range and conditional
 // handling, so [server] sends them to uploadArticle and downloadArticle.
 type MainHandler struct {
-	Logger  *slog.Logger
-	Queries *data.Queries
+	Logger       *slog.Logger
+	Queries      *data.Queries
+	PrinceClient *princepdf.Client
 }
 
 // CreateServer returns the handlers for [api.HandlerWithOptions].
-func CreateServer(logger *slog.Logger, queries *data.Queries) api.ServerInterface {
+func CreateServer(logger *slog.Logger, queries *data.Queries, client *princepdf.Client) api.ServerInterface {
 	handler := &MainHandler{
-		Logger:  logger,
-		Queries: queries,
+		Logger:       logger,
+		Queries:      queries,
+		PrinceClient: client,
 	}
 
 	strict := api.NewStrictHandlerWithOptions(handler, []api.StrictMiddlewareFunc{noStore}, api.StrictHTTPServerOptions{
@@ -129,21 +132,39 @@ func (handler *MainHandler) Notify(_ context.Context, request api.NotifyRequestO
 		}
 	case api.LayoutComplete:
 		handler.Logger.Info("Received layout complete", "payload", message)
+
 		key, ok := layoutKey(message.Payload)
 		if !ok {
 			handler.Logger.Warn("Notify received layout complete without a valid key", "payload", message.Payload)
 			return api.Notify400JSONResponse{ErrorJSONResponse: errorBody("Invalid layout key")}, nil
 		}
-		err := aws.DownloadLayout(key, safePath+".print.html")
+
+		htmlName := safePath + ".print.html"
+		htmlData, err := aws.DownloadLayout(key, htmlName)
 		if err != nil {
 			handler.Logger.Error("Notify/aws/DownloadLayout", "err", err)
 			return api.Notify500JSONResponse(errorBody("Error downloading layout from AWS")), nil
 		}
+
 		// A pipeline retry can succeed after a failure was already reported.
 		err = os.Remove(safePath + ".error") // #nosec G703
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			handler.Logger.Error("Notify/os/Remove", "err", err)
 			return api.Notify500JSONResponse(errorBody("Unable to clean up error file")), nil
+		}
+
+		job := princepdf.NewJob()
+		job.Files[htmlName] = htmlData
+		pdfData, err := handler.PrinceClient.RunContext(context.Background(), job)
+		if err != nil {
+			handler.Logger.Error("Notify/princepdf/RunContext", "err", err)
+			return api.Notify500JSONResponse(errorBody("Error converting to PDF")), nil
+		}
+
+		err = os.WriteFile(safePath+".pdf", pdfData, 0644)
+		if err != nil {
+			handler.Logger.Error("Notify/os/WriteFile", "err", err)
+			return api.Notify500JSONResponse(errorBody("Error creating PDF file")), nil
 		}
 	default:
 		return api.Notify400JSONResponse{ErrorJSONResponse: errorBody("Unknown message")}, nil
