@@ -1,0 +1,6 @@
+# Installed with --no-deps. PyMuPDF 2.x lists onnxruntime, pymupdf4llm,
+# networkx and other ML/layout packages as dependencies; they are optional
+# (only used by its LLM/layout features) and would push the package past
+# Lambda's 250 MB limit. Without them the layout script's output on the test
+# article is identical to the version validated with Prince and PAC.
+pymupdf==2.1
