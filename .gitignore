@@ -8,3 +8,6 @@ license.dat
 /data/query.sql.go
 
 /api/api.gen.go
+
+/patches/aws-iris-layout-notify/patchenv
+/patches/aws-iris-layout-notify/notification-backup-*.json

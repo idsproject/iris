@@ -1,0 +1,8 @@
+# Versions the layout script was built and tested with (Python 3.13).
+# boto3 is provided by the Lambda runtime and is not bundled.
+# PyMuPDF is installed separately, see requirements-nodeps.txt.
+numpy==2.5.3
+fonttools==4.66.1
+beautifulsoup4==4.15.0
+soupsieve==2.9.2
+typing_extensions==4.16.0
