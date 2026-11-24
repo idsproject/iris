@@ -190,19 +190,26 @@ These patterns match `pdf2html/lambda_function.py` on ASU's main branch
 image is older or newer, or after an ASU update, compare its `print(f"[ERROR] ...")` lines with
 `FAILURE_LINES` in `src/pipeline_failures.py`.
 
-## IRIS changes needed (Go, not part of this package)
+## IRIS side
+
+IRIS accepts both messages:
+
+* `layout complete`: IRIS downloads `payload.key` (`iris/<name>_print.html`)
+  from the bucket in its `HTML_BUCKET_NAME` setting, which must be set to the
+  pdf2html bucket, and saves it as `$DOWNLOAD_DIR/<file>.print.html`. It ignores
+  `payload.bucket`, leaves the S3 copy in place, and clears any `<file>.error`
+  left by an earlier failure. If `HTML_BUCKET_NAME` is unset it answers HTTP 500,
+  and the Lambda gives up after 3 tries.
+* `remediation error`: IRIS writes `<file>.error`, and `/v1/status` reports
+  `remediation_error`.
+
+Still to do in IRIS (Go):
 
 1. Send HTML-route articles to the **pdf2html** bucket as `uploads/<file>.pdf`
    (no subfolder; the pipeline skips those). Today `UploadArticle` writes to
    `PDF_BUCKET_NAME`/`pdf/`, which feeds the PDF-to-PDF pipeline.
-2. Add `layout complete` to the `NotifyRequest.message` enum in
-   `openapi/open-api.yaml`, regenerate `api/api.gen.go`, and handle it in
-   `Notify`: download `payload.bucket`/`payload.key`, convert it with Prince,
-   and write the PDF to `$DOWNLOAD_DIR/<file>`, so `/v1/status` reports it
-   done. Until then IRIS's request validation answers HTTP 400; the Lambda
-   logs that once, without retrying, and the files stay in S3.
-3. `remediation error` needs no change. IRIS writes `<file>.error` and
-   `/v1/status` reports `remediation_error`.
+2. Convert `<file>.print.html` to `$DOWNLOAD_DIR/<file>` with Prince. Until the
+   PDF exists, `/v1/status` reports the article as not found.
 
 ## Test
 
