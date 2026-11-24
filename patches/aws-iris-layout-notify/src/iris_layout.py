@@ -42,7 +42,6 @@ import io
 import json
 import os
 import re
-from pathlib import Path
 from collections import Counter
 
 import numpy as np
@@ -318,7 +317,6 @@ def load_elements(bda, page_sizes):
                 "rect": rect,
                 "html": (el.get("representation") or {}).get("html", ""),
                 "title": el.get("title") or "",
-                "heading_level": el.get("heading_level"),
                 "lines": [],
             })
     for pi in pages:
@@ -369,8 +367,7 @@ def classify(page_els, W, H, pi):
             if any(rect_area(intersect(e["rect"], f["rect"])) / ar > 0.5 for f in figs):
                 e["role"] = "drop"
             else:
-                # Keep BDA tables semantic even when their cells contain long prose.
-                e["role"] = "table"
+                e["role"] = "prose" if is_prose_table(e) else "table"
         else:
             sub = e["sub"]
             if sub in ("HEADER", "FOOTER", "PAGE_NUMBER") and pi > 0:
@@ -729,7 +726,7 @@ def choose_alt(el, alt_map):
     soup = BeautifulSoup(el["html"], "html.parser")
     img = soup.find("img")
     key = (img.get("src") or "").split("/")[-1] if img else ""
-    rem = alt_map.get('id:' + str(el['src_id']), alt_map.get(key, ""))
+    rem = alt_map.get(key, "")
     generic = {"LOGO", "ICON", "DIAGRAM", "IMAGE", "PHOTO", "CHART", "FIGURE", ""}
     weak_rem = rem.upper() in generic or re.match(r"(image of|diagram showing|picture of)\b", rem, re.I)
     if rem and not weak_rem:
@@ -823,9 +820,6 @@ def prep_table(el):
         tbody = soup.new_tag("tbody")
         for tr in rows:
             (thead if tr in head_rows else tbody).append(tr.extract())
-        for empty in list(table.find_all(['thead', 'tbody', 'tfoot'])):
-            if not empty.find('tr'):
-                empty.decompose()
         table.append(thead)
         table.append(tbody)
     return soup, table
@@ -934,17 +928,15 @@ def annotate_contrast(els, pix, scale, report, pi):
 def build(pdf_path, bda_path, out_path, remediated=None, report_path=None, dpi=144, bg_dpi=144,
           print_out=None, fonts_dir=None):
     doc = fitz.open(pdf_path)
-    bda = json.loads(Path(bda_path).read_text(encoding="utf-8-sig"))
+    bda = json.load(open(bda_path))
     page_sizes = {i: (p.rect.width, p.rect.height) for i, p in enumerate(doc)}
     pages = load_elements(bda, page_sizes)
 
     alt_map = {}
     if remediated:
-        rs = BeautifulSoup(Path(remediated).read_text(encoding="utf-8"), "html.parser")
+        rs = BeautifulSoup(open(remediated, encoding="utf-8").read(), "html.parser")
         for img in rs.find_all("img"):
             alt_map[(img.get("src") or "").split("/")[-1]] = img.get("alt", "")
-            if img.has_attr('data-layout-figure-id'):
-                alt_map['id:' + str(img['data-layout-figure-id'])] = img.get('alt', '')
 
     words = set()
     for p in doc:
@@ -984,8 +976,6 @@ def build(pdf_path, bda_path, out_path, remediated=None, report_path=None, dpi=1
     max_sec = max((k[0] for k in sec_levels), default=10)
 
     def level_for(e, pi):
-        if e.get('heading_level') in (1, 2, 3, 4, 5, 6):
-            return e['heading_level']
         k = style_key(e)
         if cover and pi == 0:
             return 1 if e["role"] == "title" else 2
@@ -1042,7 +1032,6 @@ def build(pdf_path, bda_path, out_path, remediated=None, report_path=None, dpi=1
         bgpix = bp.get_pixmap(dpi=bg_dpi)
         annotate_contrast(els, bgpix, bg_dpi / 72, report, pi)
         bg = base64.b64encode(bgpix.tobytes("jpeg", jpg_quality=70)).decode()
-        bgdoc.close()
 
         for mode in modes:
             ctx = ctxs[mode]
@@ -1054,21 +1043,20 @@ def build(pdf_path, bda_path, out_path, remediated=None, report_path=None, dpi=1
     out = TEMPLATE.replace("{{TITLE}}", esc(doc_title)) \
                   .replace("{{CSS}}", build_css(page_w)) \
                   .replace("{{BODY}}", "\n".join(bodies["screen"]))
-    Path(out_path).write_text(out, encoding="utf-8")
+    open(out_path, "w", encoding="utf-8").write(out)
     if print_out:
         sizes = sorted({(round(w, 2), round(h, 2)) for w, h in page_sizes.values()})
         pout = PRINT_TEMPLATE.replace("{{TITLE}}", esc(doc_title)) \
                              .replace("{{CSS}}", build_print_css(sizes, ctxs["print"].fonts)) \
                              .replace("{{BODY}}", "\n".join(bodies["print"]))
-        Path(print_out).write_text(pout, encoding="utf-8")
+        open(print_out, "w", encoding="utf-8").write(pout)
     adj = []
     for rec in report["contrast"]["adjusted"].values():
         rec["pages"] = sorted(rec["pages"])
         adj.append(rec)
     report["contrast"]["adjusted"] = sorted(adj, key=lambda r: -r["spans"])
     if report_path:
-        Path(report_path).write_text(json.dumps(report, indent=2), encoding="utf-8")
-    doc.close()
+        json.dump(report, open(report_path, "w"), indent=2)
     return report
 
 
@@ -1121,7 +1109,7 @@ def render_page(ctx, mode, page, pi, els, W, H, pid, page_name, bg, level_for, a
                 continue
             for g in groups:
                 text = " ".join(l["text"].strip() for l in g)
-                if heading_like(g) and e["sub"] not in ("ORPHAN", "LOCAL_PARAGRAPH") and (role == "prose" or len(groups) == 1) and len(text) > 2:
+                if heading_like(g) and e["sub"] != "ORPHAN" and (role == "prose" or len(groups) == 1) and len(text) > 2:
                     hid = ctx.uid("h")
                     lvl = ctx.heading(level_for({"lines": g, "role": "section"}, pi))
                     parts.append(f'<h{lvl} id="{hid}">{render_lines(g, ctx)}</h{lvl}>')

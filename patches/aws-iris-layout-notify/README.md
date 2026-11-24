@@ -34,12 +34,11 @@ IRIS always gets back `<file>.pdf`, the name it uploaded.
 
 ## Where this came from
 
-This replaces the four earlier packages in `patches/`:
+This replaces three of the earlier packages in `patches/`:
 
 | Package | What happened to it |
 |---|---|
-| `aws-iris-layout` | Base for this package (handler, deploy/remove, fonts, pinned requirements). |
-| `StonyBrook-IDS-print-fixes` | Its `src/iris_layout.py` is used unchanged: the original plus their `iris_layout.patch` (tables with long text stay tables, empty row groups removed, explicit heading levels honored, alt text matched by figure ID, UTF-8/BOM-safe I/O, documents closed). Their Apache 2.0 license is in `LICENSE-StonyBrook.txt`. |
+| `aws-iris-layout` | Base for this package (handler, deploy/remove, fonts, pinned requirements). Its `src/iris_layout.py` is used unchanged. |
 | `aws-iris-notify-error-patch` | Superseded. It parsed the PDF-to-PDF pipeline's `File: x, Status: Failed` logs; the failure notifier here reads `Pdf2HtmlPipeline`'s log instead. |
 | `aws-iris-notify-success-patch` | Superseded. It patched the PDF-to-PDF title generator to send `remediation complete`; here the layout sends `layout complete`. |
 
@@ -66,12 +65,11 @@ requirements-nodeps.txt    PyMuPDF 2.1, installed without its optional ML packag
 src/lambda_function.py     handler: S3 events (layout) and log events (pipeline failures)
 src/pipeline_failures.py   finds the failed article in Pdf2HtmlPipeline's log
 src/iris_notify.py         IRIS notification
-src/iris_layout.py         the layout/remediation script (StonyBrook print-fixes version)
+src/iris_layout.py         the layout/remediation script
 src/fonts/                 Liberation fonts (SIL OFL 1.1, license included)
 test/event.json            sample S3 event for a manual layout run
 test/pipeline-failure-event.py   builds a sample pipeline-failure log event
 test/test_handler.py       offline tests (standard library only)
-LICENSE-StonyBrook.txt     Apache 2.0, covering StonyBrook's changes to iris_layout.py
 patchenv/                  Python virtualenv deploy.sh builds with (not in git; created if missing)
 ```
 
