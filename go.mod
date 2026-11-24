@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.3
 	github.com/getkin/kin-openapi v0.142.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/invopop/princepdf v0.0.0-20261110105543-ce4def5c03e0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/ledongthuc/pdf v0.0.0-20260907135840-6c8c28e0e8a0
 	github.com/oapi-codegen/nethttp-middleware v1.2.0

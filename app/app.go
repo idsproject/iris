@@ -15,6 +15,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/invopop/princepdf"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,9 +23,10 @@ import (
 // the logger, the data-access models, and a wait group for
 // tracking background tasks during shutdown.
 type Application struct {
-	Logger  *slog.Logger
-	Queries *data.Queries
-	Wg      sync.WaitGroup
+	Logger       *slog.Logger
+	Queries      *data.Queries
+	PrinceClient *princepdf.Client
+	Wg           sync.WaitGroup
 }
 
 // Run starts the service: it opens the database pool,
@@ -42,9 +44,15 @@ func Run(ctx context.Context) error {
 
 	queries := data.New(dbpool)
 
+	pc := princepdf.New(
+		princepdf.WithWorkerCount(4),
+		princepdf.WithMaxJobsPerWorker(500),
+	)
+
 	app := &Application{
-		Logger:  logger,
-		Queries: queries,
+		Logger:       logger,
+		Queries:      queries,
+		PrinceClient: pc,
 	}
 
 	err = app.serve()
