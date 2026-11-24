@@ -225,6 +225,7 @@ paths:
         |---|---|
         | `remediation complete` | Pulls `result/COMPLIANT_{file}` from S3 into the download directory |
         | `remediation error` | Writes a `{file}.error` marker, which `/v1/status` reports as `remediation_error` |
+        | `layout complete` | Pulls the print HTML named by `payload.key` (`iris/{name}_print.html`) from the HTML bucket into the download directory as `{file}.print.html`, and clears any `{file}.error` marker |
         | `download complete` | Deletes the local copy of `{file}` |
 
         Any other value is rejected as `Unknown message`.
@@ -392,12 +393,16 @@ components:
           enum:
             - remediation complete
             - remediation error
+            - layout complete
             - download complete
         payload:
           description: |
             Optional sender-defined context. The failure lambda uses it to
             carry the pipeline step and the matched log line; IRIS logs it but
             does not otherwise act on it.
+
+            Required for `layout complete`, where `key` is the S3 key of the
+            print HTML, `iris/{name}_print.html`.
           type: object
           additionalProperties: true
           example:

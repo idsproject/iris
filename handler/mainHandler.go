@@ -25,6 +25,9 @@ const fileSizeThreshold = 50  // in MB
 
 const PricePerPage = 0.15
 
+// layoutPrefix is where the iris-layout Lambda writes in the HTML bucket.
+const layoutPrefix = "iris/"
+
 // errRawOperation is returned by the strict stubs for operations that
 // [server] routes to raw net/http handlers instead.
 var errRawOperation = errors.New("operation is served by a raw handler")
@@ -123,6 +126,24 @@ func (handler *MainHandler) Notify(_ context.Context, request api.NotifyRequestO
 		if err != nil {
 			handler.Logger.Error("Notify/os/Close", "err", err)
 			return api.Notify500JSONResponse(errorBody("Unable to create error file")), nil
+		}
+	case api.LayoutComplete:
+		handler.Logger.Info("Received layout complete", "payload", message)
+		key, ok := layoutKey(message.Payload)
+		if !ok {
+			handler.Logger.Warn("Notify received layout complete without a valid key", "payload", message.Payload)
+			return api.Notify400JSONResponse{ErrorJSONResponse: errorBody("Invalid layout key")}, nil
+		}
+		err := aws.DownloadLayout(key, safePath+".print.html")
+		if err != nil {
+			handler.Logger.Error("Notify/aws/DownloadLayout", "err", err)
+			return api.Notify500JSONResponse(errorBody("Error downloading layout from AWS")), nil
+		}
+		// A pipeline retry can succeed after a failure was already reported.
+		err = os.Remove(safePath + ".error") // #nosec G703
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			handler.Logger.Error("Notify/os/Remove", "err", err)
+			return api.Notify500JSONResponse(errorBody("Unable to clean up error file")), nil
 		}
 	default:
 		return api.Notify400JSONResponse{ErrorJSONResponse: errorBody("Unknown message")}, nil
@@ -339,6 +360,23 @@ func safeDownloadPath(name string) (string, bool) {
 	baseDir := os.Getenv("DOWNLOAD_DIR")
 	safePath := filepath.Join(baseDir, name)
 	return safePath, strings.HasPrefix(safePath, baseDir)
+}
+
+// layoutKey returns the print HTML key from a layout complete payload,
+// reporting false unless it names an iris/<name>_print.html object.
+func layoutKey(payload *map[string]any) (string, bool) {
+	if payload == nil {
+		return "", false
+	}
+	key, ok := (*payload)["key"].(string)
+	if !ok {
+		return "", false
+	}
+	name, found := strings.CutPrefix(key, layoutPrefix)
+	if !found || strings.Contains(name, "/") || !strings.HasSuffix(name, "_print.html") || name == "_print.html" {
+		return "", false
+	}
+	return key, true
 }
 
 // errorBody builds the envelope shared by every JSON error response. The

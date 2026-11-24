@@ -20,6 +20,7 @@ const thresholdMiBs int64 = 10
 var ErrBadPath = errors.New("bad file path")
 var ErrLoadConfig = errors.New("error loading AWS SDK config")
 var ErrCallS3 = errors.New("error calling S3")
+var ErrNoBucket = errors.New("bucket name not configured")
 
 type AwsS3Connection struct {
 	ctx       context.Context
