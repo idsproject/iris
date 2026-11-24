@@ -21,7 +21,14 @@ SSH_OPTS := -o StrictHostKeyChecking=accept-new \
 MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 DEPLOY_SCRIPT := $(MAKEFILE_DIR)bin/deploy-remote.sh
 
-.PHONY: all generate generate-sqlc generate-oapi format build test lint lint-fix deploy local tools-update clean
+# Container image. Defaults are for local use; CI overrides PRINCE_LICENSE
+# (the Jenkins file credential), IMAGE_TAG, and DOCKER_BUILD_FLAGS (registry
+# cache + push instead of --load).
+PRINCE_LICENSE     ?= license.dat
+IMAGE_TAG          ?= iris:local
+DOCKER_BUILD_FLAGS ?= --load
+
+.PHONY: all generate generate-sqlc generate-oapi format build test lint lint-fix image deploy local tools-update clean
 
 all: clean build test format lint
 
@@ -64,8 +71,21 @@ clean:
 		$(SQL_GEN_OUT) \
 		$(OAPI_GEN_OUT)
 
+image:
+	@test -s "$(PRINCE_LICENSE)" || { echo "Prince license not found: $(PRINCE_LICENSE)"; exit 1; }
+	docker buildx build \
+		--platform linux/amd64 \
+		--provenance=false \
+		--sbom=false \
+		--secret id=prince_license,src="$(PRINCE_LICENSE)" \
+		--build-arg PRINCE_LICENSE_SHA=$$(sha256sum "$(PRINCE_LICENSE)" | cut -c1-64) \
+		-f Dockerfile \
+		-t $(IMAGE_TAG) \
+		$(DOCKER_BUILD_FLAGS) \
+		.
+
 deploy:
-	@test -n "$(IMAGE)"   || { echo "IMAGE is required";   exit 1; }
+	@test -n "$(IMAGE)"  || { echo "IMAGE is required";   exit 1; }
 	@test -n "$(HOST)"    || { echo "HOST is required";    exit 1; }
 	@test -n "$(SSH_KEY)" || { echo "SSH_KEY is required (set by withCredentials)"; exit 1; }
 	@test -s "$(DEPLOY_SCRIPT)" || { echo "missing or empty $(DEPLOY_SCRIPT)"; exit 1; }
@@ -89,7 +109,7 @@ local:
 		docker stop local-iris-api; \
 		docker rm local-iris-api; \
 	fi
-	docker build -t iris:local ./
+	$(MAKE) image IMAGE_TAG=iris:local
 	docker run --rm --network local-iris-net --env-file .env --entrypoint /iris iris:local migrate
 	docker run -d --name local-iris-api --network local-iris-net --env-file .env -p "127.0.0.1:8080:8080" -v ./data/pdfs:/pdfs iris:local
 

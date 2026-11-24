@@ -20,7 +20,14 @@ FROM yeslogic/prince:17-debian-13-slim
 
 RUN apt-get -y update && apt-get -y install ca-certificates curl
 
-COPY license.dat /usr/lib/prince/license/license.dat
+# The license comes in as a BuildKit secret (see `make image`), so it never
+# has to be in the build context. Secret contents aren't part of the cache
+# key; PRINCE_LICENSE_SHA is, so a renewed license rebuilds this layer instead
+# of the registry cache serving the old one. install -m 0644 because the
+# secret mount is 0400 root and Prince runs as iris-user.
+ARG PRINCE_LICENSE_SHA
+RUN --mount=type=secret,id=prince_license,required=true \
+    install -D -m 0644 /run/secrets/prince_license /usr/lib/prince/license/license.dat
 
 COPY migrations/ /migrations
 ENV MIGRATIONS_DIR=file:///migrations

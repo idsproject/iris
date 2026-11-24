@@ -1,0 +1,11 @@
+# Keep the local build context the same as CI's clean checkout.
+# Patterns are relative to the context root.
+
+# Prince license: passed as a BuildKit secret by `make image`, never copied.
+license.dat
+
+# Local-only files
+.env
+data/pdfs
+iris
+build-meta.json

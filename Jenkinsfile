@@ -45,11 +45,13 @@ pipeline {
                 stage('Build') {
                     steps {
                         script {
-                            sh "mkdir -p ${env.DOCKER_CONFIG}"
-                            env.GIT_SHA   = env.GIT_COMMIT.take(12)
-                            env.IMAGE_REF = buildAndPush(env.REGISTRY, env.PROJECT, env.GIT_SHA)
-                            echo "built ${env.IMAGE_REF}"
-                            currentBuild.description = "${env.DEPLOY_ENV ?: 'ci'} ${env.GIT_SHA}"
+                            withCredentials([file(credentialsId: 'prince-license', variable: 'LICENSE_PATH')]) {
+                                sh "mkdir -p ${env.DOCKER_CONFIG}"
+                                env.GIT_SHA   = env.GIT_COMMIT.take(12)
+                                env.IMAGE_REF = buildAndPush(env.REGISTRY, env.PROJECT, env.GIT_SHA)
+                                echo "built ${env.IMAGE_REF}"
+                                currentBuild.description = "${env.DEPLOY_ENV ?: 'ci'} ${env.GIT_SHA}"
+                            }
                         }
                     }
                 }
@@ -57,7 +59,7 @@ pipeline {
                 stage('Verify push') {
                     steps {
                         script {
-                            docker.withRegistry("https://${registry}", 'registry-creds') {
+                            docker.withRegistry("https://${env.REGISTRY}", 'registry-creds') {
                                 sh "docker buildx imagetools inspect ${env.IMAGE_REF} --raw"
                             }
                             echo "verified ${env.IMAGE_REF}"
@@ -155,17 +157,13 @@ def buildAndPush(String registry, String project, String sha) {
         // No `| tee`. sh runs without pipefail, so a pipeline's exit status is
         // tee's, and a failed push would pass silently.
         sh """
-            docker buildx build \
-                --platform linux/amd64 \
-                --provenance=false \
-                --sbom=false \
-                --cache-from type=registry,ref=${repo}:cache \
-                --cache-to type=registry,ref=${repo}:cache,mode=max,oci-mediatypes=false \
-                --metadata-file build-meta.json \
-                -f Dockerfile \
-                -t ${tag} \
-                --output type=registry,oci-mediatypes=false \
-                .
+            make image \
+                IMAGE_TAG=${tag} \
+                PRINCE_LICENSE="\$LICENSE_PATH" \
+                DOCKER_BUILD_FLAGS="--cache-from type=registry,ref=${repo}:cache \
+                    --cache-to type=registry,ref=${repo}:cache,mode=max,oci-mediatypes=false \
+                    --metadata-file build-meta.json \
+                    --output type=registry,oci-mediatypes=false"
         """
     }
 
