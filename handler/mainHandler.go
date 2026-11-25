@@ -160,7 +160,7 @@ func (handler *MainHandler) Notify(_ context.Context, request api.NotifyRequestO
 		}
 
 		htmlName := safePath + ".print.html"
-		htmlData, err := aws.DownloadLayout(key, htmlName)
+		htmlData, err := aws.DownloadLayout(key)
 		if err != nil {
 			handler.Logger.Error("Notify/aws/DownloadLayout", "err", err)
 			return api.Notify500JSONResponse(errorBody("Error downloading layout from AWS")), nil
@@ -210,14 +210,14 @@ func (handler *MainHandler) createPDF(safePath, htmlName string, htmlData []byte
 		return
 	}
 
-	err = os.WriteFile(safePath+".pdf", pdfData, 0644) // #nosec G306 G703
+	err = os.WriteFile(safePath, pdfData, 0644) // #nosec G306 G703
 	if err != nil {
 		handler.Logger.Error("createPDF/os/WriteFile", "err", err, "file", safePath)
 		handler.markPDFFailed(safePath)
 		return
 	}
 
-	handler.Logger.Info("PDF created", "file", safePath+".pdf")
+	handler.Logger.Info("PDF created", "file", safePath)
 }
 
 // markPDFFailed records a failed conversion for GetArticleStatus.

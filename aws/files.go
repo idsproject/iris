@@ -65,7 +65,7 @@ func DownloadArticle(fileName string) error {
 // DownloadLayout copies an object the iris-layout Lambda wrote to the
 // pdf2html bucket (HTML_BUCKET_NAME) to destPath. The object is left in S3:
 // the Lambda checks for it to avoid rebuilding an article twice.
-func DownloadLayout(objectKey, destPath string) ([]byte, error) {
+func DownloadLayout(objectKey string) ([]byte, error) {
 	bucketName := os.Getenv("HTML_BUCKET_NAME")
 	if bucketName == "" {
 		return nil, ErrNoBucket
