@@ -30,6 +30,12 @@ const PricePerPage = 0.15
 // layoutPrefix is where the iris-layout Lambda writes in the HTML bucket.
 const layoutPrefix = "iris/"
 
+// Marker files beside a download, checked by GetArticleStatus.
+const (
+	remediationErrorSuffix = ".error"     // remediation failed
+	pdfErrorSuffix         = ".pdf.error" // Prince conversion failed
+)
+
 // errRawOperation is returned by the strict stubs for operations that
 // [server] routes to raw net/http handlers instead.
 var errRawOperation = errors.New("operation is served by a raw handler")
@@ -135,9 +141,9 @@ func (handler *MainHandler) Notify(_ context.Context, request api.NotifyRequestO
 		}
 	case api.RemediationError:
 		handler.Logger.Info("remedation error received", "payload", message)
-		err := createErrorFile(safePath)
+		err := createMarker(safePath + remediationErrorSuffix)
 		if err != nil {
-			handler.Logger.Error("Notify/createErrorFile", "err", err)
+			handler.Logger.Error("Notify/createMarker", "err", err)
 			return api.Notify500JSONResponse(errorBody("Unable to create error file")), nil
 		}
 	case api.LayoutComplete:
@@ -156,15 +162,18 @@ func (handler *MainHandler) Notify(_ context.Context, request api.NotifyRequestO
 			return api.Notify500JSONResponse(errorBody("Error downloading layout from AWS")), nil
 		}
 
-		// A pipeline retry can succeed after a failure was already reported.
-		err = os.Remove(safePath + ".error") // #nosec G703
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			handler.Logger.Error("Notify/os/Remove", "err", err)
-			return api.Notify500JSONResponse(errorBody("Unable to clean up error file")), nil
+		// A pipeline retry can succeed after a failure was already reported,
+		// and this run gets a fresh PDF attempt.
+		for _, suffix := range []string{remediationErrorSuffix, pdfErrorSuffix} {
+			err = os.Remove(safePath + suffix) // #nosec G703
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				handler.Logger.Error("Notify/os/Remove", "err", err)
+				return api.Notify500JSONResponse(errorBody("Unable to clean up error file")), nil
+			}
 		}
 
 		// The 200 goes back before the PDF exists, so failures from here on
-		// can only be logged and recorded in the .error file.
+		// can only be logged and recorded in the .pdf.error file.
 		handler.background(func() {
 			handler.createPDF(safePath, htmlName, htmlData)
 		})
@@ -177,7 +186,7 @@ func (handler *MainHandler) Notify(_ context.Context, request api.NotifyRequestO
 
 // createPDF converts the layout HTML to safePath + ".pdf" with Prince. It runs
 // after Notify has responded, so it reports failures by logging them and
-// creating safePath + ".error" rather than by returning them.
+// creating safePath + ".pdf.error" rather than by returning them.
 func (handler *MainHandler) createPDF(safePath, htmlName string, htmlData []byte) {
 	job := princepdf.NewJob()
 	job.Input = &princepdf.Input{
@@ -205,16 +214,16 @@ func (handler *MainHandler) createPDF(safePath, htmlName string, htmlData []byte
 
 // markPDFFailed records a failed conversion for GetArticleStatus.
 func (handler *MainHandler) markPDFFailed(safePath string) {
-	err := createErrorFile(safePath)
+	err := createMarker(safePath + pdfErrorSuffix)
 	if err != nil {
-		handler.Logger.Error("markPDFFailed/createErrorFile", "err", err, "file", safePath)
+		handler.Logger.Error("markPDFFailed/createMarker", "err", err, "file", safePath)
 	}
 }
 
-// createErrorFile creates the empty safePath + ".error" marker that
+// createMarker creates an empty marker file, such as the error files that
 // GetArticleStatus checks for.
-func createErrorFile(safePath string) error {
-	file, err := os.Create(safePath + ".error") // #nosec G304 G703
+func createMarker(path string) error {
+	file, err := os.Create(path) // #nosec G304 G703
 	if err != nil {
 		return fmt.Errorf("os/Create: %w", err)
 	}
@@ -232,38 +241,73 @@ func (handler *MainHandler) GetArticleStatus(_ context.Context, request api.GetA
 		return api.GetArticleStatus400JSONResponse{ErrorJSONResponse: errorBody("Invalid file name")}, nil
 	}
 
-	_, err := os.Stat(safePath) // #nosec G703
-	if err == nil {
-		return api.GetArticleStatus200JSONResponse{
-			Status:  api.ResponseStatusSuccess,
-			Message: "file found",
-			Done:    true,
-		}, nil
+	// The PDF is made from the layout, separately from the remediated file,
+	// so its failure is reported whether or not that file is present.
+	pdfFailed, err := fileExists(safePath + pdfErrorSuffix)
+	if err != nil {
+		handler.Logger.Error("GetArticleStatus/fileExists", "err", err)
+		return api.GetArticleStatus500JSONResponse(errorBody("error checking error file")), nil
 	}
-	if !errors.Is(err, os.ErrNotExist) {
-		handler.Logger.Error("GetArticleStatus/os/Stat", "err", err)
-		return api.GetArticleStatus500JSONResponse(errorBody("error checking file")), nil
+	var pdfError *bool
+	if pdfFailed {
+		pdfError = new(true)
 	}
 
-	_, err = os.Stat(safePath + ".error") // #nosec G703
+	found, err := fileExists(safePath)
+	if err != nil {
+		handler.Logger.Error("GetArticleStatus/fileExists", "err", err)
+		return api.GetArticleStatus500JSONResponse(errorBody("error checking file")), nil
+	}
+	if found {
+		return api.GetArticleStatus200JSONResponse{
+			Status:   api.ResponseStatusSuccess,
+			Message:  "file found",
+			Done:     true,
+			PdfError: pdfError,
+		}, nil
+	}
+
+	remediationFailed, err := fileExists(safePath + remediationErrorSuffix)
+	if err != nil {
+		handler.Logger.Error("GetArticleStatus/fileExists", "err", err)
+		return api.GetArticleStatus500JSONResponse(errorBody("error checking error file")), nil
+	}
 	switch {
-	case err == nil:
+	case remediationFailed:
 		return api.GetArticleStatus200JSONResponse{
 			Status:           api.ResponseStatusSuccess,
 			Message:          "error during remediation",
 			Done:             false,
 			RemediationError: new(true),
+			PdfError:         pdfError,
 		}, nil
-	case errors.Is(err, os.ErrNotExist):
+	case pdfFailed:
+		return api.GetArticleStatus200JSONResponse{
+			Status:   api.ResponseStatusSuccess,
+			Message:  "error creating PDF",
+			Done:     false,
+			PdfError: pdfError,
+		}, nil
+	default:
 		return api.GetArticleStatus200JSONResponse{
 			Status:  api.ResponseStatusSuccess,
 			Message: "file not found",
 			Done:    false,
 		}, nil
-	default:
-		handler.Logger.Error("GetArticleStatus/os/Stat", "err", err)
-		return api.GetArticleStatus500JSONResponse(errorBody("error checking error file")), nil
 	}
+}
+
+// fileExists reports whether path exists, returning an error only when
+// that cannot be determined.
+func fileExists(path string) (bool, error) {
+	_, err := os.Stat(path) // #nosec G703
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 func (handler *MainHandler) GetReport(ctx context.Context, request api.GetReportRequestObject) (api.GetReportResponseObject, error) {

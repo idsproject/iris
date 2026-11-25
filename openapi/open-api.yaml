@@ -154,7 +154,8 @@ paths:
       summary: Check remediation status of a file
       description: |
         Reports whether a remediated file has landed in the local download
-        directory. Poll this after uploading.
+        directory, and whether remediation or PDF conversion failed. Poll
+        this after uploading.
       operationId: getArticleStatus
       parameters:
         - $ref: "#/components/parameters/FilenamePath"
@@ -361,6 +362,13 @@ components:
               type: boolean
             remediation_error:
               type: boolean
+              description: Remediation failed (a `.error` file is present).
+            pdf_error:
+              type: boolean
+              description: |
+                Converting the layout HTML to PDF failed (a `.pdf.error` file
+                is present). Reported whether or not the remediated file is
+                present, since the PDF is produced separately from it.
     ReportResponse:
       allOf:
         - $ref: '#/components/schemas/BaseResponse'
