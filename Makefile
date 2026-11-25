@@ -71,7 +71,7 @@ clean:
 		$(SQL_GEN_OUT) \
 		$(OAPI_GEN_OUT)
 
-image:
+image: generate
 	@test -s "$(PRINCE_LICENSE)" || { echo "Prince license not found: $(PRINCE_LICENSE)"; exit 1; }
 	docker buildx build \
 		--platform linux/amd64 \
