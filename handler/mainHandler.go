@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/idsproject/iris/api"
 	"github.com/idsproject/iris/aws"
@@ -29,6 +30,9 @@ const PricePerPage = 0.15
 
 // layoutPrefix is where the iris-layout Lambda writes in the HTML bucket.
 const layoutPrefix = "iris/"
+
+// pdfTimeout bounds one Prince conversion, including time queued for a worker.
+const pdfTimeout = 5 * time.Minute
 
 // Marker files beside a download, checked by GetArticleStatus.
 const (
@@ -194,8 +198,12 @@ func (handler *MainHandler) createPDF(safePath, htmlName string, htmlData []byte
 	}
 	job.Files[htmlName] = htmlData
 
-	// Not the request's context: that is cancelled once Notify returns.
-	pdfData, err := handler.PrinceClient.RunContext(context.Background(), job)
+	// Not the request's context: that is cancelled once Notify returns. The
+	// timeout keeps a hung job from blocking this goroutine, and shutdown's
+	// Wg.Wait, forever.
+	ctx, cancel := context.WithTimeout(context.Background(), pdfTimeout)
+	defer cancel()
+	pdfData, err := handler.PrinceClient.RunContext(ctx, job)
 	if err != nil {
 		handler.Logger.Error("createPDF/princepdf/RunContext", "err", err, "file", safePath)
 		handler.markPDFFailed(safePath)

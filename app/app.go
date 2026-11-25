@@ -48,6 +48,21 @@ func Run(ctx context.Context) error {
 		princepdf.WithWorkerCount(4),
 		princepdf.WithMaxJobsPerWorker(500),
 	)
+	// Without Start there are no workers to take jobs, and RunContext blocks
+	// until its context ends.
+	err = pc.Start()
+	if err != nil {
+		logger.Error("starting prince", "err", err)
+		return err
+	}
+	// Deferred so it runs after serve returns, which is after app.Wg.Wait:
+	// background PDF jobs finish before the workers go.
+	defer func() {
+		pcStopErr := pc.Stop()
+		if pcStopErr != nil {
+			logger.Error("stopping prince", "err", pcStopErr)
+		}
+	}()
 
 	app := &Application{
 		Logger:       logger,
