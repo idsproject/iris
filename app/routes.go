@@ -17,7 +17,8 @@ func (app *Application) routes() (http.Handler, error) {
 
 	mux := http.NewServeMux()
 
-	api.HandlerWithOptions(handler.CreateServer(app.Logger, app.Queries, app.PrinceClient), api.StdHTTPServerOptions{
+	api.HandlerWithOptions(handler.CreateServer(app.Logger, app.Queries, &app.Wg, app.PrinceClient), 
+    api.StdHTTPServerOptions{
 		BaseRouter:       mux,
 		Middlewares:      []api.MiddlewareFunc{app.validateRequests(spec)},
 		ErrorHandlerFunc: app.paramError,

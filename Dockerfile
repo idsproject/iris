@@ -29,6 +29,8 @@ ARG PRINCE_LICENSE_SHA
 RUN --mount=type=secret,id=prince_license,required=true \
     install -D -m 0644 /run/secrets/prince_license /usr/lib/prince/license/license.dat
 
+ENV XDG_CACHE_HOME=/tmp/.cache
+
 COPY migrations/ /migrations
 ENV MIGRATIONS_DIR=file:///migrations
 
@@ -41,4 +43,4 @@ COPY --from=build /etc/group /etc/group
 COPY --from=build /iris /iris
 
 USER iris-user:iris-user
-CMD ["/iris"]
+ENTRYPOINT ["/iris"]

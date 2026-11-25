@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+    "sync"
 
 	"github.com/idsproject/iris/api"
 	"github.com/idsproject/iris/aws"
@@ -43,14 +44,16 @@ var errRawOperation = errors.New("operation is served by a raw handler")
 type MainHandler struct {
 	Logger       *slog.Logger
 	Queries      *data.Queries
+    Wg           *sync.WaitGroup
 	PrinceClient *princepdf.Client
 }
 
 // CreateServer returns the handlers for [api.HandlerWithOptions].
-func CreateServer(logger *slog.Logger, queries *data.Queries, client *princepdf.Client) api.ServerInterface {
+func CreateServer(logger *slog.Logger, queries *data.Queries, wg *sync.WaitGroup, client *princepdf.Client) api.ServerInterface {
 	handler := &MainHandler{
 		Logger:       logger,
 		Queries:      queries,
+        Wg:           wg,
 		PrinceClient: client,
 	}
 
@@ -67,6 +70,18 @@ func CreateServer(logger *slog.Logger, queries *data.Queries, client *princepdf.
 type server struct {
 	api.ServerInterface
 	handler *MainHandler
+}
+
+func (handler *MainHandler) background(fn func()) {
+    handler.Wg.Go(func() {
+        defer func() {
+            pv := recover()
+            if pv != nil {
+                handler.Logger.Error(fmt.Sprintf("%v", pv))
+            }
+        }()
+        fn()
+    })
 }
 
 func (s *server) UploadArticle(w http.ResponseWriter, r *http.Request, params api.UploadArticleParams) {
@@ -154,6 +169,9 @@ func (handler *MainHandler) Notify(_ context.Context, request api.NotifyRequestO
 		}
 
 		job := princepdf.NewJob()
+        job.Input = &princepdf.Input {
+            Src: htmlName,
+        }
 		job.Files[htmlName] = htmlData
 		pdfData, err := handler.PrinceClient.RunContext(context.Background(), job)
 		if err != nil {
