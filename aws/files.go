@@ -13,8 +13,8 @@ func UploadArticle(file io.Reader, fileName string, fileSize *int64) error {
 		return err
 	}
 
-	bucketName := os.Getenv("PDF_BUCKET_NAME")
-	objectKey := "pdf/" + fileName
+	bucketName := os.Getenv("HTML_BUCKET_NAME")
+	objectKey := "uploads/" + fileName
 
 	err = awsConn.uploadFile(file, bucketName, objectKey, fileSize)
 	if err != nil {
