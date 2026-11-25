@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-    "sync"
+	"sync"
 
 	"github.com/idsproject/iris/api"
 	"github.com/idsproject/iris/aws"
@@ -44,7 +44,7 @@ var errRawOperation = errors.New("operation is served by a raw handler")
 type MainHandler struct {
 	Logger       *slog.Logger
 	Queries      *data.Queries
-    Wg           *sync.WaitGroup
+	Wg           *sync.WaitGroup
 	PrinceClient *princepdf.Client
 }
 
@@ -53,7 +53,7 @@ func CreateServer(logger *slog.Logger, queries *data.Queries, wg *sync.WaitGroup
 	handler := &MainHandler{
 		Logger:       logger,
 		Queries:      queries,
-        Wg:           wg,
+		Wg:           wg,
 		PrinceClient: client,
 	}
 
@@ -73,15 +73,15 @@ type server struct {
 }
 
 func (handler *MainHandler) background(fn func()) {
-    handler.Wg.Go(func() {
-        defer func() {
-            pv := recover()
-            if pv != nil {
-                handler.Logger.Error(fmt.Sprintf("%v", pv))
-            }
-        }()
-        fn()
-    })
+	handler.Wg.Go(func() {
+		defer func() {
+			pv := recover()
+			if pv != nil {
+				handler.Logger.Error(fmt.Sprintf("%v", pv))
+			}
+		}()
+		fn()
+	})
 }
 
 func (s *server) UploadArticle(w http.ResponseWriter, r *http.Request, params api.UploadArticleParams) {
@@ -135,14 +135,9 @@ func (handler *MainHandler) Notify(_ context.Context, request api.NotifyRequestO
 		}
 	case api.RemediationError:
 		handler.Logger.Info("remedation error received", "payload", message)
-		file, err := os.Create(safePath + ".error") // #nosec G304 G703
+		err := createErrorFile(safePath)
 		if err != nil {
-			handler.Logger.Error("Notify/os/Create", "err", err)
-			return api.Notify500JSONResponse(errorBody("Unable to create error file")), nil
-		}
-		err = file.Close()
-		if err != nil {
-			handler.Logger.Error("Notify/os/Close", "err", err)
+			handler.Logger.Error("Notify/createErrorFile", "err", err)
 			return api.Notify500JSONResponse(errorBody("Unable to create error file")), nil
 		}
 	case api.LayoutComplete:
@@ -168,27 +163,66 @@ func (handler *MainHandler) Notify(_ context.Context, request api.NotifyRequestO
 			return api.Notify500JSONResponse(errorBody("Unable to clean up error file")), nil
 		}
 
-		job := princepdf.NewJob()
-        job.Input = &princepdf.Input {
-            Src: htmlName,
-        }
-		job.Files[htmlName] = htmlData
-		pdfData, err := handler.PrinceClient.RunContext(context.Background(), job)
-		if err != nil {
-			handler.Logger.Error("Notify/princepdf/RunContext", "err", err)
-			return api.Notify500JSONResponse(errorBody("Error converting to PDF")), nil
-		}
-
-		err = os.WriteFile(safePath+".pdf", pdfData, 0644)
-		if err != nil {
-			handler.Logger.Error("Notify/os/WriteFile", "err", err)
-			return api.Notify500JSONResponse(errorBody("Error creating PDF file")), nil
-		}
+		// The 200 goes back before the PDF exists, so failures from here on
+		// can only be logged and recorded in the .error file.
+		handler.background(func() {
+			handler.createPDF(safePath, htmlName, htmlData)
+		})
 	default:
 		return api.Notify400JSONResponse{ErrorJSONResponse: errorBody("Unknown message")}, nil
 	}
 
 	return api.Notify200JSONResponse{SuccessJSONResponse: successBody("notified")}, nil
+}
+
+// createPDF converts the layout HTML to safePath + ".pdf" with Prince. It runs
+// after Notify has responded, so it reports failures by logging them and
+// creating safePath + ".error" rather than by returning them.
+func (handler *MainHandler) createPDF(safePath, htmlName string, htmlData []byte) {
+	job := princepdf.NewJob()
+	job.Input = &princepdf.Input{
+		Src: htmlName,
+	}
+	job.Files[htmlName] = htmlData
+
+	// Not the request's context: that is cancelled once Notify returns.
+	pdfData, err := handler.PrinceClient.RunContext(context.Background(), job)
+	if err != nil {
+		handler.Logger.Error("createPDF/princepdf/RunContext", "err", err, "file", safePath)
+		handler.markPDFFailed(safePath)
+		return
+	}
+
+	err = os.WriteFile(safePath+".pdf", pdfData, 0644) // #nosec G306 G703
+	if err != nil {
+		handler.Logger.Error("createPDF/os/WriteFile", "err", err, "file", safePath)
+		handler.markPDFFailed(safePath)
+		return
+	}
+
+	handler.Logger.Info("PDF created", "file", safePath+".pdf")
+}
+
+// markPDFFailed records a failed conversion for GetArticleStatus.
+func (handler *MainHandler) markPDFFailed(safePath string) {
+	err := createErrorFile(safePath)
+	if err != nil {
+		handler.Logger.Error("markPDFFailed/createErrorFile", "err", err, "file", safePath)
+	}
+}
+
+// createErrorFile creates the empty safePath + ".error" marker that
+// GetArticleStatus checks for.
+func createErrorFile(safePath string) error {
+	file, err := os.Create(safePath + ".error") // #nosec G304 G703
+	if err != nil {
+		return fmt.Errorf("os/Create: %w", err)
+	}
+	err = file.Close()
+	if err != nil {
+		return fmt.Errorf("os/Close: %w", err)
+	}
+	return nil
 }
 
 func (handler *MainHandler) GetArticleStatus(_ context.Context, request api.GetArticleStatusRequestObject) (api.GetArticleStatusResponseObject, error) {
